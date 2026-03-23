@@ -1,0 +1,201 @@
+========================================================================
+                   AI CARD GRADER — EVALUATION REPORT                   
+========================================================================
+
+  Report Date:    2026-03-23T22:19:12.802398Z
+  Total Records:  25
+  Grade MAE:      0.388
+  Decision Acc:   96.0%
+
+
+────────────────────────────────────────────────────────────────────────
+  SUMMARY
+────────────────────────────────────────────────────────────────────────
+  Grade MAE:                 0.388   (avg absolute grade error)
+  Grade Within ±0.5:         84.0%  (% cards within half a grade)
+  Grade Within ±1.0:         96.0%  (% cards within one grade)
+  Band Accuracy:             76.0%  (% cards in correct PSA band)
+  Decision Accuracy:         96.0%  (grade + direction correct)
+  False Positive Rate:       33.3%  (bad GRADE calls)
+  False Negative Rate:       15.8%  (missed profitable cards)
+  Profit MAE:                 $+29   (avg profit prediction error)
+  Total Actual Profit:      $+4264
+
+────────────────────────────────────────────────────────────────────────
+  GRADE ACCURACY METRICS
+────────────────────────────────────────────────────────────────────────
+  N Cards:                25
+  MAE:                 0.388   (mean absolute error)
+  RMSE:               0.5134   (root mean squared error)
+  Bias:               +0.228  (+ = system over-grades)
+  Within ±0.5:         84.0%
+  Within ±1.0:         96.0%
+  Band Accuracy:       76.0%
+  Max Error:             1.2
+
+  Error Distribution:
+    exact (0)             7
+    within_0.5           14
+    within_1.0            3
+    over_1.0              1
+
+  Grading Direction:
+    Over-graded:    10  (40.0%)
+    Under-graded:    4  (16.0%)
+    Accurate:       11  (44.0%)
+
+────────────────────────────────────────────────────────────────────────
+  DECISION ACCURACY
+────────────────────────────────────────────────────────────────────────
+  Total Cards:            25
+  With Profit Data:       22
+  Decision Accuracy:   96.0%
+  False Positive Rate: 33.3%  (GRADE call → loss)
+  False Negative Rate: 15.8%  (NO-GRADE → profit)
+  Precision:           94.1%
+  Recall:              84.2%
+
+  Decision Tier Counts:
+    STRONG GRADE           11
+    GRADE                   6
+    CONDITIONAL             4
+    HOLD RAW                1
+    DO NOT GRADE            3
+
+────────────────────────────────────────────────────────────────────────
+  CONFUSION MATRIX  (GRADE call vs actual profitability)
+────────────────────────────────────────────────────────────────────────
+
+                    ACTUAL PROFIT   ACTUAL LOSS
+  Predicted GRADE           16 TP           1 FP
+  Predicted NO-GRADE         3 FN           2 TN
+
+  Overall Accuracy:  81.8%
+  Total (with data): 22
+
+────────────────────────────────────────────────────────────────────────
+  ROI PERFORMANCE
+────────────────────────────────────────────────────────────────────────
+  Cards with Profit Data:      22
+  Total Actual Profit:       $+4264
+  Total Predicted Profit:    $+4518
+  Profit MAE:                  $+29
+  Profit Bias:                 $+12  (+ = overestimates)
+  Profitable Cards:            19
+  Unprofitable Cards:           3
+  Profitable Rate:          86.4%
+
+  Profit by Decision Tier:
+  Tier                   Count      Total      Avg    Win%
+  --------------------------------------------------------
+  STRONG GRADE              11     $+3915    $+356  100.0%
+  GRADE                      6      $+315     $+52   83.3%
+  CONDITIONAL                4       $+34      $+8   75.0%
+  HOLD RAW                   1         $0       $0    0.0%
+
+────────────────────────────────────────────────────────────────────────
+  GRADE BAND ACCURACY BREAKDOWN
+────────────────────────────────────────────────────────────────────────
+  Band             Count     MAE   BandAcc   W±0.5
+  --------------------------------------------------
+  PSA 9.5-10           3   0.500    100.0%  100.0%
+  PSA 9               10   0.210     70.0%  100.0%
+  PSA 8-8.5            4   0.850     50.0%   25.0%
+  PSA 7-7.5            4   0.500     75.0%   75.0%
+  PSA 5-6              4   0.175    100.0%  100.0%
+
+────────────────────────────────────────────────────────────────────────
+  TREND ANALYSIS  (rolling window: 5 cards)
+────────────────────────────────────────────────────────────────────────
+  Trend Direction:  ✓ IMPROVING
+  First-half MAE:   0.434
+  Second-half MAE:  0.380
+  MAE Delta:        -0.054
+
+  Rolling Performance (last 10 records):
+  #    Card                             Error  Rolling MAE     Bias
+  -----------------------------------------------------------------
+  16   umbreon_vmax_alt_001             +0.20        0.240   +0.040
+  17   rayquaza_vmax_alt_001            +0.50        0.340   +0.140
+  18   giratina_vstar_alt_001           +0.50        0.340   +0.140
+  19   pikachu_illustrator_reprint_0    +0.00        0.240   +0.240
+  20   sylveon_vmax_alt_001             +1.00        0.440   +0.440
+  21   arceus_vstar_alt_001             -0.50        0.500   +0.300
+  22   darkrai_vstar_001                +0.50        0.500   +0.300
+  23   mew_swsh_promo_001               +0.00        0.400   +0.200
+  24   bidoof_swsh_001                  +0.00        0.400   +0.200
+  25   charizard_sv_obsidian_001        +0.20        0.240   +0.040
+
+────────────────────────────────────────────────────────────────────────
+  WEAKNESSES & RECOMMENDATIONS
+────────────────────────────────────────────────────────────────────────
+  Identified Weaknesses:
+    [HIGH] System consistently over-graded cards in PSA 8-8.5 by 0.85 grade points on average.
+           Evidence: bias=+0.850 over 4 cards
+    [MEDIUM] System consistently over-graded cards in PSA 7-7.5 by 0.50 grade points on average.
+           Evidence: bias=+0.500 over 4 cards
+    [MEDIUM] System consistently under-graded cards in PSA 9.5-10 by 0.50 grade points on average.
+           Evidence: bias=-0.500 over 3 cards
+
+  Action Items:
+    1. [HIGH] System consistently over-graded cards in PSA 8-8.5 by 0.85 grade points on average.
+    2. [MEDIUM] System consistently over-graded cards in PSA 7-7.5 by 0.50 grade points on average.
+    3. [MEDIUM] System consistently under-graded cards in PSA 9.5-10 by 0.50 grade points on average.
+
+  Decision Tier Performance Scores:
+  Tier                   Count  Score/card  Profitable  Avg Profit
+  -----------------------------------------------------------------
+  STRONG GRADE              11       +1.00      100.0%       $+356
+  GRADE                      6       +0.50       83.3%        $+52
+  CONDITIONAL                4       -0.62       75.0%         $+8
+  HOLD RAW                   1       +0.50        0.0%          $0
+
+  Grade Band Bias Detection:
+  Band             Count     Bias     MAE       Direction
+  -------------------------------------------------------
+  PSA 9               10   +0.110   0.210        accurate
+  PSA 8-8.5            4   +0.850   0.850     over-graded
+  PSA 7-7.5            4   +0.500   0.500     over-graded
+  PSA 9.5-10           3   -0.500   0.500    under-graded
+  PSA 5-6              1   +0.000   0.000        accurate
+
+────────────────────────────────────────────────────────────────────────
+  PER-CARD DETAIL
+────────────────────────────────────────────────────────────────────────
+  Card                                Pred Actual   Err Decision                 Profit
+  ------------------------------------------------------------------------------------------
+  Charizard Base Set Holo              9.2    9.0  +0.2 ✓ STRONG GRADE             $+480
+  Blastoise Base Set Holo              8.7    8.0  +0.7 ✗ GRADE                     $+55
+  Venusaur Base Set Holo               7.5    7.0  +0.5 ✓ CONDITIONAL               $+12
+  Pikachu Yellow Cheeks Base Set       9.5   10.0  -0.5 ✓ STRONG GRADE             $+620
+  Mewtwo Base Set Holo                 6.2    6.0  +0.2 ✓ DO NOT GRADE                 -
+  Umbreon Neo Discovery Holo           9.0    9.0  +0.0 ✓ STRONG GRADE             $+210
+  Espeon Neo Discovery Holo            8.5    9.0  -0.5 ✓ GRADE                    $+175
+  Rayquaza EX Delta Species            9.2    8.0  +1.2 ✗ GRADE                     $-18
+  Charizard EX FireRed LeafGreen       9.0    9.0  +0.0 ✓ STRONG GRADE             $+320
+  Lugia Neo Genesis Holo               9.5    9.0  +0.5 ✓ STRONG GRADE             $+890
+  Ho-Oh Neo Revelation Holo            8.0    7.0  +1.0 ✗ CONDITIONAL                $-8
+  Gengar Fossil Set Holo               7.0    7.0  +0.0 ✓ CONDITIONAL               $+22
+  Magneton Fossil Holo                 5.5    5.0  +0.5 ✓ DO NOT GRADE                 -
+  Pikachu SWSH Promo 001               9.5   10.0  -0.5 ✓ STRONG GRADE              $+45
+  Charizard VMAX SWSH Champions Pat    9.0    9.0  +0.0 ✓ STRONG GRADE             $+185
+  Umbreon VMAX Alternate Art           9.2    9.0  +0.2 ✓ STRONG GRADE             $+520
+  Rayquaza VMAX Alternate Art          8.5    8.0  +0.5 ✓ GRADE                     $+60
+  Giratina VSTAR Alternate Art         9.5    9.0  +0.5 ✓ STRONG GRADE             $+240
+  Pikachu Illustrator Promo (Reprin    6.0    6.0  +0.0 ✓ HOLD RAW                    $0
+  Sylveon VMAX Alternate Art           9.0    8.0  +1.0 ✗ GRADE                     $+25
+  Arceus VSTAR Alternate Art           9.5   10.0  -0.5 ✓ STRONG GRADE             $+310
+  Darkrai VSTAR Secret Rare            7.5    7.0  +0.5 ✓ CONDITIONAL                $+8
+  Mew SWSH Promo 078                   9.0    9.0  +0.0 ✓ GRADE                     $+18
+  Bidoof SWSH Common                   5.0    5.0  +0.0 ✓ DO NOT GRADE                 -
+  Charizard ex SV Obsidian Flames      9.2    9.0  +0.2 ✓ STRONG GRADE              $+95
+========================================================================
+
+════════════════════════════════════════════════════════════════════════
+  CALIBRATION UPDATE
+────────────────────────────────────────────────────────────────────────
+  Old Bias:    +0.1800
+  New Bias:    +0.2100
+  Bias Delta:  +0.0300
+  N Outcomes:  25
+  Timestamp:   2026-03-23T22:19:12.802630Z

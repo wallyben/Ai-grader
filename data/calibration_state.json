@@ -1,0 +1,119 @@
+{
+  "rolling_window": 50,
+  "rolling_outcomes": [
+    {
+      "predicted_grade": 9.2,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 8.7,
+      "actual_grade": 8.0
+    },
+    {
+      "predicted_grade": 7.5,
+      "actual_grade": 7.0
+    },
+    {
+      "predicted_grade": 9.5,
+      "actual_grade": 10.0
+    },
+    {
+      "predicted_grade": 6.2,
+      "actual_grade": 6.0
+    },
+    {
+      "predicted_grade": 9.0,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 8.5,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 9.2,
+      "actual_grade": 8.0
+    },
+    {
+      "predicted_grade": 9.0,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 9.5,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 8.0,
+      "actual_grade": 7.0
+    },
+    {
+      "predicted_grade": 7.0,
+      "actual_grade": 7.0
+    },
+    {
+      "predicted_grade": 5.5,
+      "actual_grade": 5.0
+    },
+    {
+      "predicted_grade": 9.5,
+      "actual_grade": 10.0
+    },
+    {
+      "predicted_grade": 9.0,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 9.2,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 8.5,
+      "actual_grade": 8.0
+    },
+    {
+      "predicted_grade": 9.5,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 6.0,
+      "actual_grade": 6.0
+    },
+    {
+      "predicted_grade": 9.0,
+      "actual_grade": 8.0
+    },
+    {
+      "predicted_grade": 9.5,
+      "actual_grade": 10.0
+    },
+    {
+      "predicted_grade": 7.5,
+      "actual_grade": 7.0
+    },
+    {
+      "predicted_grade": 9.0,
+      "actual_grade": 9.0
+    },
+    {
+      "predicted_grade": 5.0,
+      "actual_grade": 5.0
+    },
+    {
+      "predicted_grade": 9.2,
+      "actual_grade": 9.0
+    }
+  ],
+  "calibration_history": [
+    {
+      "updated": true,
+      "n_new_outcomes": 25,
+      "n_rolling_total": 25,
+      "old_bias": 0.18,
+      "new_bias": 0.21,
+      "bias_delta": 0.03,
+      "old_variance": 0.0723,
+      "new_variance": 0.1599,
+      "timestamp": "2026-03-23T22:19:12.802630Z"
+    }
+  ],
+  "saved_at": "2026-03-23T22:19:12.802674Z"
+}
