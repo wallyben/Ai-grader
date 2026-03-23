@@ -1,14 +1,16 @@
 """
 Deterministic Grading Engine
 Implements PSA/BGS-inspired rule-based grading with hard caps.
+Supports card profiles for type-specific thresholds.
 All outputs are reproducible given identical inputs — no randomness.
+
+New in v2: full grade_trace, profile-aware caps, structured cap evaluation log.
 """
 
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 
 
-# ─── WEIGHTS ──────────────────────────────────────────────────────────────────
-# Based on real-world grading importance: corners/edges drive most grades
+# ─── Default weights (overridden by profile) ──────────────────────────────────
 CATEGORY_WEIGHTS = {
     "centering": 0.20,
     "edges":     0.25,
@@ -16,250 +18,308 @@ CATEGORY_WEIGHTS = {
     "surface":   0.25,
 }
 
+DEFAULT_CAPS = {
+    "severe_corner":          5.0,
+    "moderate_corner":        7.0,
+    "minor_corner":           9.0,
+    "severe_edge":            6.0,
+    "moderate_edge":          8.0,
+    "minor_edge":             9.0,
+    "centering_severe":       4.0,
+    "centering_significant":  6.0,
+    "centering_off":          8.0,
+    "centering_slight":       9.0,
+    "heavy_scratch":          6.0,
+    "light_scratch":          8.0,
+    "dent_crease":            6.0,
+    "print_lines":            8.0,
+    "high_surface_noise":     7.0,
+}
 
-# ─── HARD CAP RULES ───────────────────────────────────────────────────────────
-# Each rule: (condition_fn, max_grade_allowed, description)
-# Evaluated in order; the lowest cap from all triggered rules wins.
 
-def _centering_caps(centering: Dict) -> List[Tuple[float, str]]:
-    caps = []
+def _get_caps(profile: Optional[Dict]) -> Dict:
+    if profile and "caps" in profile:
+        return profile["caps"]
+    return DEFAULT_CAPS
+
+
+def _get_weights(profile: Optional[Dict]) -> Dict:
+    if profile and "scoring" in profile and "weights" in profile["scoring"]:
+        return profile["scoring"]["weights"]
+    return CATEGORY_WEIGHTS
+
+
+# ─── Cap rule collectors ──────────────────────────────────────────────────────
+# Each returns a list of (rule_key, cap_value, description) tuples.
+
+def _centering_rules(centering: Dict, caps: Dict) -> List[Tuple[str, float, str]]:
     s = centering["score"]
+    rules = []
     if s < 5.0:
-        caps.append((4.0, "severe miscentering"))
+        rules.append(("centering_severe",      caps["centering_severe"],
+                       "severe miscentering (>75/25)"))
     elif s <= 6.0:
-        caps.append((6.0, "significant miscentering (>75/25)"))
+        rules.append(("centering_significant", caps["centering_significant"],
+                       "significant miscentering (>70/30)"))
     elif s <= 7.5:
-        caps.append((8.0, "off-center (>65/35)"))
+        rules.append(("centering_off",         caps["centering_off"],
+                       "off-center (>65/35)"))
     elif s <= 9.0:
-        caps.append((9.0, "slight centering issue (>60/40)"))
-    return caps
+        rules.append(("centering_slight",      caps["centering_slight"],
+                       "slight centering issue (>60/40)"))
+    return rules
 
 
-def _edge_caps(edges: Dict) -> List[Tuple[float, str]]:
-    caps = []
+def _edge_rules(edges: Dict, caps: Dict) -> List[Tuple[str, float, str]]:
+    rules = []
     for side, data in edges["sides"].items():
         level = data["defect_level"]
         if level == "severe":
-            caps.append((6.0, f"severe edge damage — {side}"))
+            rules.append(("severe_edge", caps["severe_edge"],
+                           f"severe edge damage — {side}"))
         elif level == "moderate":
-            caps.append((8.0, f"edge whitening/chipping — {side}"))
+            rules.append(("moderate_edge", caps["moderate_edge"],
+                           f"edge whitening/chipping — {side}"))
         elif level == "minor":
-            caps.append((9.0, f"minor edge wear — {side}"))
-    return caps
+            rules.append(("minor_edge", caps["minor_edge"],
+                           f"minor edge wear — {side}"))
+    return rules
 
 
-def _corner_caps(corners: Dict) -> List[Tuple[float, str]]:
-    caps = []
-    for corner, data in corners["corners"].items():
+def _corner_rules(corners: Dict, caps: Dict) -> List[Tuple[str, float, str]]:
+    rules = []
+    for pos, data in corners["corners"].items():
+        label = pos.replace("_", " ")
         level = data["defect_level"]
-        label = corner.replace("_", " ")
         if level == "severe":
-            caps.append((5.0, f"severe corner damage — {label}"))
+            rules.append(("severe_corner", caps["severe_corner"],
+                           f"severe corner damage — {label}"))
         elif level == "moderate":
-            caps.append((7.0, f"corner wear — {label}"))
+            rules.append(("moderate_corner", caps["moderate_corner"],
+                           f"corner wear — {label}"))
         elif level == "minor":
-            caps.append((9.0, f"minor corner wear — {label}"))
-    return caps
+            rules.append(("minor_corner", caps["minor_corner"],
+                           f"minor corner wear — {label}"))
+    return rules
 
 
-def _surface_caps(surface: Dict) -> List[Tuple[float, str]]:
-    caps = []
+def _surface_rules(surface: Dict, caps: Dict) -> List[Tuple[str, float, str]]:
+    rules = []
     for flag in surface.get("risk_flags", []):
-        if "heavy scratches" in flag:
-            caps.append((6.0, flag))
+        if "heavy scratch" in flag:
+            rules.append(("heavy_scratch", caps["heavy_scratch"], flag))
         elif "scratch" in flag:
-            caps.append((8.0, flag))
+            rules.append(("light_scratch", caps["light_scratch"], flag))
         elif "dent" in flag or "crease" in flag:
-            caps.append((6.0, flag))
+            rules.append(("dent_crease", caps["dent_crease"], flag))
         elif "print line" in flag:
-            caps.append((8.0, flag))
+            rules.append(("print_lines", caps["print_lines"], flag))
         elif "high surface noise" in flag:
-            caps.append((7.0, flag))
-    return caps
+            rules.append(("high_surface_noise", caps["high_surface_noise"], flag))
+    return rules
 
+
+# ─── Cap application with full trace ─────────────────────────────────────────
 
 def apply_hard_caps(base_grade: float,
-                     centering: Dict, edges: Dict,
-                     corners: Dict, surface: Dict) -> Tuple[float, List[str]]:
+                     centering: Dict,
+                     edges: Dict,
+                     corners: Dict,
+                     surface: Dict,
+                     profile: Optional[Dict] = None) -> Tuple[float, List[str]]:
     """
-    Collect all applicable grade caps and apply the most restrictive one.
-    Returns (capped_grade, list_of_triggered_cap_descriptions).
+    Backward-compatible wrapper — returns (final_grade, triggered_descriptions).
     """
-    all_caps: List[Tuple[float, str]] = []
-    all_caps.extend(_centering_caps(centering))
-    all_caps.extend(_edge_caps(edges))
-    all_caps.extend(_corner_caps(corners))
-    all_caps.extend(_surface_caps(surface))
+    final, triggered, _, _ = _apply_caps_with_trace(
+        base_grade, centering, edges, corners, surface, profile
+    )
+    return final, triggered
 
-    if not all_caps:
-        return base_grade, []
 
-    # Find the strictest (lowest) cap
-    min_cap = min(cap for cap, _ in all_caps)
-    triggered = [desc for cap, desc in all_caps if cap <= base_grade or cap == min_cap]
+def _apply_caps_with_trace(
+        base_grade: float,
+        centering: Dict,
+        edges: Dict,
+        corners: Dict,
+        surface: Dict,
+        profile: Optional[Dict] = None
+) -> Tuple[float, List[str], List[Dict], Optional[float]]:
+    """
+    Apply all caps and return:
+        (final_grade, triggered_descs, full_cap_trace, effective_cap_value)
 
-    # Deduplicate while preserving order
-    seen = set()
-    unique_triggered = []
-    for t in triggered:
-        if t not in seen:
-            seen.add(t)
-            unique_triggered.append(t)
+    full_cap_trace entries:
+        { rule, cap, description, triggered, would_affect }
+    """
+    caps = _get_caps(profile)
 
-    final = min(base_grade, min_cap)
-    return final, unique_triggered
+    all_rules: List[Tuple[str, float, str]] = []
+    all_rules.extend(_centering_rules(centering, caps))
+    all_rules.extend(_edge_rules(edges, caps))
+    all_rules.extend(_corner_rules(corners, caps))
+    all_rules.extend(_surface_rules(surface, caps))
 
+    cap_trace: List[Dict] = []
+    triggered_rules: List[Tuple[float, str]] = []
+
+    for rule_key, cap_val, desc in all_rules:
+        would_lower = cap_val < base_grade
+        cap_trace.append({
+            "rule":        rule_key,
+            "cap":         cap_val,
+            "description": desc,
+            "triggered":   would_lower,
+        })
+        if would_lower:
+            triggered_rules.append((cap_val, desc))
+
+    if triggered_rules:
+        effective_cap = min(c for c, _ in triggered_rules)
+        final_grade   = effective_cap
+        triggered_descs = list(dict.fromkeys(d for _, d in triggered_rules))
+    else:
+        effective_cap = None
+        final_grade   = base_grade
+        triggered_descs = []
+
+    return final_grade, triggered_descs, cap_trace, effective_cap
+
+
+# ─── Confidence ───────────────────────────────────────────────────────────────
 
 def _compute_confidence(centering: Dict, edges: Dict,
                          corners: Dict, surface: Dict) -> float:
-    """
-    Confidence score reflects how certain we are about the grade.
-    Reduced by:
-    - Borderline scores in any category
-    - Ambiguous surface readings
-    - Multiple risk flags
-    """
     conf = 0.94
-
-    # Borderline centering is hard to distinguish
-    c = centering["score"]
-    if 7.5 <= c <= 9.0:
+    if 7.5 <= centering["score"] <= 9.0:
         conf -= 0.04
-
-    # High surface noise makes analysis less reliable
     noise = surface.get("surface_noise", 0.0)
     if noise > 0.6:
         conf -= 0.10
     elif noise > 0.4:
         conf -= 0.05
-
-    # Each risk flag adds uncertainty
     n_flags = len(surface.get("risk_flags", []))
     conf -= 0.04 * n_flags
-
-    # Multiple defect categories
-    defect_categories = sum([
+    n_defect_cats = sum([
         len(edges.get("defect_locations", [])) > 0,
         len(corners.get("defect_corners", [])) > 0,
         n_flags > 0,
     ])
-    if defect_categories >= 2:
+    if n_defect_cats >= 2:
         conf -= 0.05
-
     return float(max(0.40, min(0.97, round(conf, 2))))
 
 
+# ─── Grade band ───────────────────────────────────────────────────────────────
+
 def _grade_band(grade: float) -> str:
-    """PSA-style grade band label."""
-    if grade >= 10.0:
-        return "GEM MINT (PSA 10)"
-    elif grade >= 9.5:
-        return "GEM MINT+ (PSA 9.5)"
-    elif grade >= 9.0:
-        return "MINT (PSA 9)"
-    elif grade >= 8.5:
-        return "NM-MT+ (PSA 8.5)"
-    elif grade >= 8.0:
-        return "NM-MT (PSA 8)"
-    elif grade >= 7.0:
-        return "NEAR MINT (PSA 7)"
-    elif grade >= 6.0:
-        return "EX-MT (PSA 6)"
-    elif grade >= 5.0:
-        return "EXCELLENT (PSA 5)"
-    elif grade >= 4.0:
-        return "VG-EX (PSA 4)"
-    elif grade >= 3.0:
-        return "VERY GOOD (PSA 3)"
-    elif grade >= 2.0:
-        return "GOOD (PSA 2)"
-    else:
-        return "POOR (PSA 1)"
+    if grade >= 10.0:  return "GEM MINT (PSA 10)"
+    if grade >= 9.5:   return "GEM MINT+ (PSA 9.5)"
+    if grade >= 9.0:   return "MINT (PSA 9)"
+    if grade >= 8.5:   return "NM-MT+ (PSA 8.5)"
+    if grade >= 8.0:   return "NM-MT (PSA 8)"
+    if grade >= 7.0:   return "NEAR MINT (PSA 7)"
+    if grade >= 6.0:   return "EX-MT (PSA 6)"
+    if grade >= 5.0:   return "EXCELLENT (PSA 5)"
+    if grade >= 4.0:   return "VG-EX (PSA 4)"
+    if grade >= 3.0:   return "VERY GOOD (PSA 3)"
+    if grade >= 2.0:   return "GOOD (PSA 2)"
+    return "POOR (PSA 1)"
 
 
-def _recommendation(grade: float, confidence: float,
-                     caps: List[str]) -> Tuple[str, str]:
-    """
-    Should-I-Grade decision engine.
+# ─── Recommendation ───────────────────────────────────────────────────────────
 
-    GRADE        → high probability of positive ROI
-    CONDITIONAL  → depends on card value/demand
-    DO NOT GRADE → grading cost > likely slab premium
-    """
-    if grade >= 9.0:
-        rec = "GRADE"
+def _recommendation(grade: float, confidence: float, caps: List[str],
+                     profile: Optional[Dict] = None) -> Tuple[str, str]:
+    grade_thresh = 9.0
+    cond_thresh  = 7.0
+    if profile and "scoring" in profile:
+        grade_thresh = profile["scoring"].get("grade_threshold", grade_thresh)
+        cond_thresh  = profile["scoring"].get("conditional_threshold", cond_thresh)
+
+    if grade >= grade_thresh:
+        rec    = "GRADE"
         reason = (f"Estimated grade {grade} qualifies as MINT or better. "
                   "Strong grading candidate with good ROI potential.")
-    elif grade >= 8.0:
-        rec = "CONDITIONAL"
-        reason = (f"Estimated grade {grade}. "
-                  "Consider grading only for high-demand or rare cards where "
-                  "an 8 slab commands a meaningful premium.")
-    elif grade >= 7.0:
-        rec = "CONDITIONAL"
-        reason = (f"Estimated grade {grade}. "
-                  "Borderline — grading is only worthwhile for trophy/key cards. "
-                  "Raw value likely similar to PSA 7 slab value for most sets.")
+    elif grade >= cond_thresh:
+        rec    = "CONDITIONAL"
+        reason = (f"Estimated grade {grade}. Consider grading only for "
+                  "high-demand or rare cards where the slab commands a premium.")
     else:
-        rec = "DO NOT GRADE"
-        reason = (f"Estimated grade {grade}. "
-                  "Grading fees will likely exceed the slab premium at this grade. "
-                  "Sell raw or pursue restoration options.")
+        rec    = "DO NOT GRADE"
+        reason = (f"Estimated grade {grade}. Grading fees will likely exceed "
+                  "the slab premium at this grade. Sell raw or hold.")
 
-    # Append cap notes
     if caps:
-        cap_str = "; ".join(caps[:2])
-        reason += f" | Caps triggered: {cap_str}"
+        reason += f" | Caps: {'; '.join(caps[:2])}"
         if len(caps) > 2:
-            reason += f" (+{len(caps) - 2} more)"
-
-    # Low confidence warning
+            reason += f" (+{len(caps)-2} more)"
     if confidence < 0.70:
-        reason += " | ⚠ Low confidence — manual inspection strongly recommended."
-
+        reason += " | ⚠ Low confidence — manual inspection recommended."
     return rec, reason
 
 
-def compute_grade(centering: Dict, edges: Dict,
-                  corners: Dict, surface: Dict) -> Dict[str, Any]:
+# ─── Main entry point ─────────────────────────────────────────────────────────
+
+def compute_grade(centering: Dict,
+                   edges: Dict,
+                   corners: Dict,
+                   surface: Dict,
+                   profile: Optional[Dict] = None) -> Dict[str, Any]:
     """
     Compute the final deterministic grade from all analysis modules.
 
-    Returns structured grade result including:
-        grade, grade_band, per-category scores,
-        caps_triggered, risk_flags, confidence, recommendation.
+    New in v2:
+      - profile-aware weights and caps
+      - grade_trace field with full scoring audit trail
     """
-    c_score = centering["score"]
-    e_score = edges["score"]
+    weights = _get_weights(profile)
+
+    c_score  = centering["score"]
+    e_score  = edges["score"]
     co_score = corners["score"]
-    s_score = surface["score"]
+    s_score  = surface["score"]
 
-    # Weighted base grade
     base_grade = (
-        c_score  * CATEGORY_WEIGHTS["centering"] +
-        e_score  * CATEGORY_WEIGHTS["edges"] +
-        co_score * CATEGORY_WEIGHTS["corners"] +
-        s_score  * CATEGORY_WEIGHTS["surface"]
+        c_score  * weights["centering"] +
+        e_score  * weights["edges"] +
+        co_score * weights["corners"] +
+        s_score  * weights["surface"]
     )
 
-    # Apply hard caps
-    final_grade_raw, caps_triggered = apply_hard_caps(
-        base_grade, centering, edges, corners, surface
+    # Apply hard caps with full trace
+    raw_capped, caps_triggered, cap_trace, effective_cap = _apply_caps_with_trace(
+        base_grade, centering, edges, corners, surface, profile
     )
 
-    # Round to nearest 0.5 (PSA-style half-point grades)
-    final_grade = round(final_grade_raw * 2) / 2
+    # Round to nearest 0.5
+    final_grade = round(round(raw_capped * 2) / 2, 1)
     final_grade = max(1.0, min(10.0, final_grade))
 
     confidence = _compute_confidence(centering, edges, corners, surface)
-    band = _grade_band(final_grade)
-    rec, rec_reason = _recommendation(final_grade, confidence, caps_triggered)
+    band       = _grade_band(final_grade)
+    rec, reason = _recommendation(final_grade, confidence, caps_triggered, profile)
 
-    # Collect all risk flags (from surface + caps)
     all_flags = list(surface.get("risk_flags", []))
     for cap in caps_triggered:
         if cap not in all_flags:
             all_flags.append(cap)
+
+    # ── Full grade trace ──────────────────────────────────────────────────────
+    grade_trace = {
+        "sub_scores": {
+            "centering": c_score,
+            "edges":     e_score,
+            "corners":   co_score,
+            "surface":   s_score,
+        },
+        "weights": weights,
+        "weighted_sum":     round(base_grade, 3),
+        "caps_evaluated":   cap_trace,
+        "effective_cap":    effective_cap,
+        "post_cap_grade":   round(raw_capped, 3),
+        "final_rounded_grade": final_grade,
+        "profile_used":     profile.get("display_name", "tcg_generic") if profile else "tcg_generic",
+    }
 
     return {
         "grade":            final_grade,
@@ -274,6 +334,7 @@ def compute_grade(centering: Dict, edges: Dict,
         "risk_flags":       all_flags,
         "confidence":       confidence,
         "recommendation":   rec,
-        "rec_reason":       rec_reason,
+        "rec_reason":       reason,
         "base_grade":       round(base_grade, 2),
+        "grade_trace":      grade_trace,
     }

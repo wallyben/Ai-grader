@@ -1,0 +1,366 @@
+{
+  "tcg_generic": {
+    "display_name": "TCG Generic",
+    "description": "Balanced default profile for any trading card game card.",
+    "centering": {
+      "deviation_10": 10,
+      "deviation_9_5": 12,
+      "deviation_9":  18,
+      "deviation_8_5": 22,
+      "deviation_8":  28,
+      "deviation_7":  38,
+      "deviation_6":  48,
+      "deviation_5":  60
+    },
+    "edges": {
+      "whitening_minor":   0.05,
+      "whitening_moderate":0.12,
+      "whitening_severe":  0.22,
+      "roughness_minor":   0.25,
+      "roughness_moderate":0.45,
+      "roughness_severe":  0.65,
+      "chipping_minor":    0.12,
+      "chipping_moderate": 0.22,
+      "chipping_severe":   0.32
+    },
+    "corners": {
+      "whitening_minor":   0.06,
+      "whitening_moderate":0.15,
+      "whitening_severe":  0.28,
+      "rounding_minor":    0.08,
+      "rounding_moderate": 0.18,
+      "rounding_severe":   0.32
+    },
+    "surface": {
+      "scratch_density_minor":    0.010,
+      "scratch_density_moderate": 0.025,
+      "scratch_density_severe":   0.050,
+      "anomaly_density_warn":     0.055,
+      "print_line_warn":          0.45,
+      "noise_warn":               0.55
+    },
+    "scoring": {
+      "weights": {
+        "centering": 0.20,
+        "edges":     0.25,
+        "corners":   0.30,
+        "surface":   0.25
+      },
+      "front_back_weight": {
+        "front": 0.60,
+        "back":  0.40
+      },
+      "grade_threshold":       9.0,
+      "conditional_threshold": 7.0
+    },
+    "caps": {
+      "severe_corner":          5.0,
+      "moderate_corner":        7.0,
+      "minor_corner":           9.0,
+      "severe_edge":            6.0,
+      "moderate_edge":          8.0,
+      "minor_edge":             9.0,
+      "centering_severe":       4.0,
+      "centering_significant":  6.0,
+      "centering_off":          8.0,
+      "centering_slight":       9.0,
+      "heavy_scratch":          6.0,
+      "light_scratch":          8.0,
+      "dent_crease":            6.0,
+      "print_lines":            8.0,
+      "high_surface_noise":     7.0
+    }
+  },
+
+  "pokemon_modern": {
+    "display_name": "Pokémon Modern (2003–present)",
+    "description": "SWSH, SV, XY, SM era cards with white borders. PSA grades these very strictly on centering.",
+    "centering": {
+      "deviation_10":  8,
+      "deviation_9_5": 10,
+      "deviation_9":   15,
+      "deviation_8_5": 20,
+      "deviation_8":   25,
+      "deviation_7":   35,
+      "deviation_6":   45,
+      "deviation_5":   58
+    },
+    "edges": {
+      "whitening_minor":   0.04,
+      "whitening_moderate":0.10,
+      "whitening_severe":  0.20,
+      "roughness_minor":   0.22,
+      "roughness_moderate":0.42,
+      "roughness_severe":  0.62,
+      "chipping_minor":    0.10,
+      "chipping_moderate": 0.20,
+      "chipping_severe":   0.30
+    },
+    "corners": {
+      "whitening_minor":   0.05,
+      "whitening_moderate":0.13,
+      "whitening_severe":  0.25,
+      "rounding_minor":    0.07,
+      "rounding_moderate": 0.16,
+      "rounding_severe":   0.30
+    },
+    "surface": {
+      "scratch_density_minor":    0.010,
+      "scratch_density_moderate": 0.025,
+      "scratch_density_severe":   0.050,
+      "anomaly_density_warn":     0.055,
+      "print_line_warn":          0.40,
+      "noise_warn":               0.55
+    },
+    "scoring": {
+      "weights": {
+        "centering": 0.22,
+        "edges":     0.25,
+        "corners":   0.30,
+        "surface":   0.23
+      },
+      "front_back_weight": {
+        "front": 0.60,
+        "back":  0.40
+      },
+      "grade_threshold":       9.0,
+      "conditional_threshold": 7.5
+    },
+    "caps": {
+      "severe_corner":          5.0,
+      "moderate_corner":        7.0,
+      "minor_corner":           9.0,
+      "severe_edge":            6.0,
+      "moderate_edge":          8.0,
+      "minor_edge":             9.0,
+      "centering_severe":       4.0,
+      "centering_significant":  6.0,
+      "centering_off":          8.0,
+      "centering_slight":       9.0,
+      "heavy_scratch":          6.0,
+      "light_scratch":          8.0,
+      "dent_crease":            6.0,
+      "print_lines":            8.0,
+      "high_surface_noise":     7.0
+    }
+  },
+
+  "pokemon_vintage": {
+    "display_name": "Pokémon Vintage (Base–EX era, 1999–2003)",
+    "description": "Base Set, Jungle, Fossil, Neo etc. Known for production centering issues. Lenient centering; critical surface analysis.",
+    "centering": {
+      "deviation_10":  13,
+      "deviation_9_5": 16,
+      "deviation_9":   22,
+      "deviation_8_5": 28,
+      "deviation_8":   35,
+      "deviation_7":   45,
+      "deviation_6":   55,
+      "deviation_5":   65
+    },
+    "edges": {
+      "whitening_minor":   0.06,
+      "whitening_moderate":0.14,
+      "whitening_severe":  0.25,
+      "roughness_minor":   0.28,
+      "roughness_moderate":0.48,
+      "roughness_severe":  0.68,
+      "chipping_minor":    0.13,
+      "chipping_moderate": 0.24,
+      "chipping_severe":   0.35
+    },
+    "corners": {
+      "whitening_minor":   0.07,
+      "whitening_moderate":0.16,
+      "whitening_severe":  0.30,
+      "rounding_minor":    0.09,
+      "rounding_moderate": 0.20,
+      "rounding_severe":   0.35
+    },
+    "surface": {
+      "scratch_density_minor":    0.008,
+      "scratch_density_moderate": 0.018,
+      "scratch_density_severe":   0.035,
+      "anomaly_density_warn":     0.045,
+      "print_line_warn":          0.40,
+      "noise_warn":               0.50
+    },
+    "scoring": {
+      "weights": {
+        "centering": 0.18,
+        "edges":     0.25,
+        "corners":   0.32,
+        "surface":   0.25
+      },
+      "front_back_weight": {
+        "front": 0.62,
+        "back":  0.38
+      },
+      "grade_threshold":       8.0,
+      "conditional_threshold": 6.0
+    },
+    "caps": {
+      "severe_corner":          5.0,
+      "moderate_corner":        7.0,
+      "minor_corner":           9.0,
+      "severe_edge":            6.0,
+      "moderate_edge":          8.0,
+      "minor_edge":             9.0,
+      "centering_severe":       4.0,
+      "centering_significant":  6.0,
+      "centering_off":          8.0,
+      "centering_slight":       9.0,
+      "heavy_scratch":          6.0,
+      "light_scratch":          8.0,
+      "dent_crease":            6.0,
+      "print_lines":            8.0,
+      "high_surface_noise":     7.0
+    }
+  },
+
+  "sports_paper": {
+    "display_name": "Sports Cards – Paper",
+    "description": "Traditional paper sports cards (Topps, Donruss, Fleer, Upper Deck).",
+    "centering": {
+      "deviation_10":  10,
+      "deviation_9_5": 13,
+      "deviation_9":   20,
+      "deviation_8_5": 25,
+      "deviation_8":   30,
+      "deviation_7":   40,
+      "deviation_6":   50,
+      "deviation_5":   60
+    },
+    "edges": {
+      "whitening_minor":   0.05,
+      "whitening_moderate":0.12,
+      "whitening_severe":  0.22,
+      "roughness_minor":   0.25,
+      "roughness_moderate":0.45,
+      "roughness_severe":  0.65,
+      "chipping_minor":    0.12,
+      "chipping_moderate": 0.22,
+      "chipping_severe":   0.32
+    },
+    "corners": {
+      "whitening_minor":   0.06,
+      "whitening_moderate":0.15,
+      "whitening_severe":  0.28,
+      "rounding_minor":    0.08,
+      "rounding_moderate": 0.18,
+      "rounding_severe":   0.32
+    },
+    "surface": {
+      "scratch_density_minor":    0.010,
+      "scratch_density_moderate": 0.025,
+      "scratch_density_severe":   0.050,
+      "anomaly_density_warn":     0.055,
+      "print_line_warn":          0.45,
+      "noise_warn":               0.55
+    },
+    "scoring": {
+      "weights": {
+        "centering": 0.20,
+        "edges":     0.25,
+        "corners":   0.30,
+        "surface":   0.25
+      },
+      "front_back_weight": {
+        "front": 0.60,
+        "back":  0.40
+      },
+      "grade_threshold":       9.0,
+      "conditional_threshold": 7.0
+    },
+    "caps": {
+      "severe_corner":          5.0,
+      "moderate_corner":        7.0,
+      "minor_corner":           9.0,
+      "severe_edge":            6.0,
+      "moderate_edge":          8.0,
+      "minor_edge":             9.0,
+      "centering_severe":       4.0,
+      "centering_significant":  6.0,
+      "centering_off":          8.0,
+      "centering_slight":       9.0,
+      "heavy_scratch":          6.0,
+      "light_scratch":          8.0,
+      "dent_crease":            6.0,
+      "print_lines":            8.0,
+      "high_surface_noise":     7.0
+    }
+  },
+
+  "sports_chrome": {
+    "display_name": "Sports Cards – Chrome/Prizm",
+    "description": "Topps Chrome, Prizm, Select, Optic etc. Chrome surface shows scratches dramatically. Higher surface sensitivity.",
+    "centering": {
+      "deviation_10":  8,
+      "deviation_9_5": 11,
+      "deviation_9":   16,
+      "deviation_8_5": 20,
+      "deviation_8":   26,
+      "deviation_7":   36,
+      "deviation_6":   46,
+      "deviation_5":   56
+    },
+    "edges": {
+      "whitening_minor":   0.04,
+      "whitening_moderate":0.10,
+      "whitening_severe":  0.18,
+      "roughness_minor":   0.22,
+      "roughness_moderate":0.40,
+      "roughness_severe":  0.60,
+      "chipping_minor":    0.10,
+      "chipping_moderate": 0.18,
+      "chipping_severe":   0.28
+    },
+    "corners": {
+      "whitening_minor":   0.05,
+      "whitening_moderate":0.12,
+      "whitening_severe":  0.22,
+      "rounding_minor":    0.07,
+      "rounding_moderate": 0.15,
+      "rounding_severe":   0.28
+    },
+    "surface": {
+      "scratch_density_minor":    0.005,
+      "scratch_density_moderate": 0.012,
+      "scratch_density_severe":   0.025,
+      "anomaly_density_warn":     0.040,
+      "print_line_warn":          0.35,
+      "noise_warn":               0.45
+    },
+    "scoring": {
+      "weights": {
+        "centering": 0.22,
+        "edges":     0.24,
+        "corners":   0.28,
+        "surface":   0.26
+      },
+      "front_back_weight": {
+        "front": 0.65,
+        "back":  0.35
+      },
+      "grade_threshold":       9.0,
+      "conditional_threshold": 8.0
+    },
+    "caps": {
+      "severe_corner":          5.0,
+      "moderate_corner":        7.0,
+      "minor_corner":           9.0,
+      "severe_edge":            6.0,
+      "moderate_edge":          8.0,
+      "minor_edge":             9.0,
+      "centering_severe":       4.0,
+      "centering_significant":  6.0,
+      "centering_off":          8.0,
+      "centering_slight":       9.0,
+      "heavy_scratch":          5.0,
+      "light_scratch":          7.0,
+      "dent_crease":            5.0,
+      "print_lines":            7.0,
+      "high_surface_noise":     6.0
+    }
+  }
+}

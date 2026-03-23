@@ -1,17 +1,23 @@
 """
-AI Card Grader — Streamlit UI
-Production-grade interface for trading card grading analysis.
+AI Card Grader v2 — Streamlit UI
+Production-grade interface with quality gate, card profiles, defect evidence,
+grade trace, front/back comparison, card comparison mode, and artifact download.
 Run with: streamlit run app.py
 """
 
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image
 import io
 import traceback
+from typing import Optional, Dict, Any
 
-from grader import grade_card, load_image, normalize_card, bgr_to_rgb
+from grader import (
+    grade_card_full, load_image, normalize_card,
+    list_profiles, get_profile_display_names,
+    build_download_zip, defects_to_dicts,
+    bgr_to_rgb,
+)
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -21,111 +27,128 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─── Custom CSS ───────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .block-container { padding-top: 1rem; }
-    .stMetric { background: #1a1a2e; border-radius: 8px; padding: 8px; }
-    .grade-banner { border-radius: 10px; padding: 18px 22px; margin-bottom: 8px; }
-    div[data-testid="stImage"] img { border-radius: 6px; }
+.block-container { padding-top: 1rem; }
+.stMetric { background: #1a1a2e; border-radius: 8px; padding: 8px; }
+div[data-testid="stImage"] img { border-radius: 6px; }
+.defect-row { padding: 4px 8px; border-radius: 4px; margin: 2px 0; }
 </style>
 """, unsafe_allow_html=True)
 
+# ─── Session state ────────────────────────────────────────────────────────────
+if "comparison_cards" not in st.session_state:
+    st.session_state.comparison_cards = []
+
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
-def render_sidebar() -> bool:
+def render_sidebar() -> tuple:
     with st.sidebar:
-        st.markdown("## 🃏 AI Card Grader")
-        st.markdown("*PSA-style AI analysis*")
+        st.markdown("## 🃏 AI Card Grader v2")
+        st.markdown("*PSA-style AI analysis · Zero cloud dependency*")
         st.divider()
 
-        show_debug = st.checkbox("Show raw data / debug", value=False)
+        # Profile selector
+        st.markdown("### 🎴 Card Profile")
+        disp_names = get_profile_display_names()
+        profile_keys = list(disp_names.keys())
+        profile_labels = [disp_names[k] for k in profile_keys]
+        sel_idx = st.selectbox(
+            "Select card type", range(len(profile_keys)),
+            format_func=lambda i: profile_labels[i],
+            index=profile_keys.index("tcg_generic"),
+        )
+        profile_name = profile_keys[sel_idx]
 
         st.divider()
+        show_debug = st.checkbox("Show raw data / debug", False)
+        run_qgate  = st.checkbox("Run quality gate", True)
+        st.divider()
+
         st.markdown("### 📷 Image Tips")
         st.markdown("""
-- Lay card flat on neutral background
-- Even, diffuse lighting (no glare)
-- Full card visible, no cropping
-- Minimum 800 × 600 px recommended
+- Flat on neutral background
+- Diffuse, even lighting (no glare)
+- Full card in frame, no cropping
+- ≥ 800 × 600 px recommended
+- Remove from sleeve/toploader
         """)
-
         st.divider()
         st.markdown("### 📊 Grade Scale")
-        grade_table = [
-            ("10",   "💎 Gem Mint"),
-            ("9–9.5","✨ Mint"),
-            ("8–8.5","⭐ NM-MT"),
-            ("7",    "🔵 Near Mint"),
-            ("6",    "🟡 EX-MT"),
-            ("5",    "🟠 Excellent"),
-            ("≤4",   "🔴 VG or below"),
-        ]
-        for g, lbl in grade_table:
+        for g, lbl in [("10","💎 Gem Mint"),("9–9.5","✨ Mint"),("8–8.5","⭐ NM-MT"),
+                        ("7","🔵 Near Mint"),("6","🟡 EX-MT"),("5","🟠 Excellent"),("≤4","🔴 VG or below")]:
             st.markdown(f"`{g}` {lbl}")
 
-        st.divider()
-        st.markdown("### 🔒 Cap Rules")
-        st.markdown("""
-| Defect | Max Grade |
-|---|---|
-| Severe corner | 5 |
-| Off-center >65/35 | 8 |
-| Edge whitening | 8 |
-| Heavy scratch | 6 |
-| Surface dent | 6 |
-        """)
+    return profile_name, show_debug, run_qgate
 
-    return show_debug
+
+# ─── Quality Gate Widget ──────────────────────────────────────────────────────
+def render_quality_gate(qg: Dict) -> None:
+    decision = qg.get("decision", "pass")
+    score    = qg.get("score", 100)
+    summary  = qg.get("summary", "")
+    issues   = qg.get("issues", [])
+
+    if decision == "pass":
+        st.success(f"✅ **Quality Gate: PASS** (score {score}/100) — {summary}")
+    elif decision == "warn":
+        st.warning(f"⚠️ **Quality Gate: WARN** (score {score}/100) — {summary}")
+    else:
+        st.error(f"❌ **Quality Gate: FAIL** (score {score}/100) — {summary}")
+
+    if issues:
+        with st.expander("Quality issues detail", expanded=(decision == "fail")):
+            for issue in issues:
+                sev = issue.get("severity", "warn")
+                icon = "❌" if sev == "fail" else "⚠️"
+                st.markdown(
+                    f"{icon} **{issue['check'].replace('_',' ').title()}** — "
+                    f"{issue['message']} "
+                    f"*(metric: {issue['metric_name']} = {issue['metric_value']:.3f})*"
+                )
 
 
 # ─── Grade Banner ─────────────────────────────────────────────────────────────
-def render_grade_banner(gr: dict) -> None:
+def render_grade_banner(gr: Dict) -> None:
     grade = gr["grade"]
     band  = gr["grade_band"]
     rec   = gr["recommendation"]
     conf  = gr["confidence"]
 
-    palette = {
-        "high":   ("#0d2b1a", "#22c55e"),
-        "mid":    ("#0d1f3c", "#60a5fa"),
-        "low":    ("#2b1a00", "#f59e0b"),
-        "fail":   ("#2b0a0a", "#ef4444"),
+    tier_map = {
+        "high": (grade >= 9,    "#0d2b1a", "#22c55e"),
+        "mid":  (grade >= 7,    "#0d1f3c", "#60a5fa"),
+        "low":  (grade >= 5,    "#2b1a00", "#f59e0b"),
+        "fail": (True,          "#2b0a0a", "#ef4444"),
     }
-    tier = ("high" if grade >= 9 else "mid" if grade >= 7
-            else "low" if grade >= 5 else "fail")
-    bg, fg = palette[tier]
-
+    bg, fg = next((b, f) for t, (cond, b, f) in tier_map.items() if cond)
     rec_fg = {"GRADE": "#22c55e", "CONDITIONAL": "#f59e0b",
               "DO NOT GRADE": "#ef4444"}.get(rec, "#ffffff")
-
     grade_disp = str(grade) if grade != int(grade) else str(int(grade))
 
     st.markdown(f"""
-<div class="grade-banner" style="background:{bg}; border:1px solid {fg}33;">
-  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+<div style="background:{bg};border:1px solid {fg}33;border-radius:10px;
+            padding:18px 22px;margin-bottom:8px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
     <div>
-      <span style="font-size:3.8em; font-weight:900; color:{fg}; letter-spacing:-2px;">{grade_disp}</span>
-      <span style="font-size:1.2em; color:#888; margin-left:6px;">/10</span>
+      <span style="font-size:3.8em;font-weight:900;color:{fg};letter-spacing:-2px;">{grade_disp}</span>
+      <span style="font-size:1.2em;color:#888;margin-left:6px;">/10</span>
     </div>
     <div style="text-align:right;">
-      <div style="font-size:1.35em; font-weight:700; color:{fg};">{band}</div>
-      <div style="font-size:0.85em; color:#999; margin-top:2px;">
-        Confidence: {int(conf * 100)}%
-      </div>
+      <div style="font-size:1.35em;font-weight:700;color:{fg};">{band}</div>
+      <div style="font-size:0.85em;color:#999;margin-top:2px;">Confidence: {int(conf*100)}%</div>
     </div>
   </div>
-  <div style="margin-top:12px; background:rgba(0,0,0,0.35); border-radius:6px;
-              padding:9px 14px; border-left:3px solid {rec_fg};">
-    <span style="color:{rec_fg}; font-size:1.05em; font-weight:700;">▶ {rec}</span>
-    <span style="color:#aaa; font-size:0.82em; margin-left:10px;">{gr['rec_reason']}</span>
+  <div style="margin-top:12px;background:rgba(0,0,0,0.35);border-radius:6px;
+              padding:9px 14px;border-left:3px solid {rec_fg};">
+    <span style="color:{rec_fg};font-size:1.05em;font-weight:700;">▶ {rec}</span>
+    <span style="color:#aaa;font-size:0.82em;margin-left:10px;">{gr['rec_reason']}</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 
-# ─── Score Metrics Row ────────────────────────────────────────────────────────
-def render_score_metrics(gr: dict, analysis: dict) -> None:
+def render_score_metrics(gr: Dict, analysis: Dict) -> None:
     c1, c2, c3, c4 = st.columns(4)
     items = [
         (c1, "🎯 Centering", gr["centering_score"],
@@ -141,61 +164,47 @@ def render_score_metrics(gr: dict, analysis: dict) -> None:
         with col:
             st.metric(label, f"{score}/10", delta=detail)
 
-    # Flags / caps
     if gr["caps_triggered"]:
-        caps_md = " &nbsp;|&nbsp; ".join(
-            f"🔒 {c}" for c in gr["caps_triggered"]
-        )
-        st.error(f"**Grade Caps Applied:** {caps_md}")
-
+        st.error("**🔒 Grade Caps Applied:** " +
+                 " | ".join(f"🔒 {c}" for c in gr["caps_triggered"]))
     if gr["risk_flags"]:
-        flags_md = " &nbsp;|&nbsp; ".join(
-            f"⚠️ {f.title()}" for f in gr["risk_flags"]
-        )
-        st.warning(f"**Risk Flags:** {flags_md}")
+        st.warning("**⚠️ Risk Flags:** " +
+                   " | ".join(f"⚠️ {f.title()}" for f in gr["risk_flags"]))
 
 
-# ─── Tab: Overview ────────────────────────────────────────────────────────────
-def tab_overview(front_norm: np.ndarray, viz: dict,
-                 gr: dict, analysis: dict, detected: bool) -> None:
+# ─── Analysis Tabs ────────────────────────────────────────────────────────────
+
+def tab_overview(front_norm, viz, gr, analysis, detected, profile_name) -> None:
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Normalized Card")
+        st.subheader("Normalised Card")
         if not detected:
-            st.caption("⚠️ Auto-boundary detection fell back — "
-                       "ensure full card is visible in image.")
+            st.caption("⚠️ Auto-boundary detection fell back — ensure full card is visible.")
         st.image(bgr_to_rgb(front_norm), use_container_width=True)
-
+        st.caption(f"Profile: **{profile_name}**")
     with c2:
         st.subheader("Grade Summary")
         st.image(bgr_to_rgb(viz["grade_summary"]), use_container_width=True)
 
     st.divider()
     st.subheader("📋 Full Breakdown")
-
-    rows = [
-        ("Centering", gr["centering_score"],
-         f"LR {gr['centering_lr']} · TB {gr['centering_tb']}",
-         analysis["centering"]["score"]),
-        ("Edges", gr["edges_score"],
-         f"Avg whitening {analysis['edges']['avg_whitening']:.4f} · "
-         f"Defects: {', '.join(analysis['edges']['defect_locations']) or 'none'}",
-         analysis["edges"]["score"]),
-        ("Corners", gr["corners_score"],
-         f"Defect corners: {', '.join(analysis['corners']['defect_corners']) or 'none'}",
-         analysis["corners"]["score"]),
-        ("Surface", gr["surface_score"],
-         f"Scratches {analysis['surface']['scratch_density']:.5f} · "
-         f"Anomalies {analysis['surface']['anomaly_density']:.5f}",
-         analysis["surface"]["score"]),
-    ]
-
-    header_cols = st.columns([2, 1.5, 5, 2])
-    for col, h in zip(header_cols, ["Category", "Score", "Details", "Status"]):
+    header = st.columns([2, 1.5, 5, 2])
+    for col, h in zip(header, ["Category", "Score", "Details", "Status"]):
         col.markdown(f"**{h}**")
     st.markdown("---")
-
-    for cat, score, detail, _ in rows:
+    rows = [
+        ("Centering", gr["centering_score"],
+         f"LR {gr['centering_lr']} · TB {gr['centering_tb']}"),
+        ("Edges",     gr["edges_score"],
+         f"Avg whitening {analysis['edges']['avg_whitening']:.4f} · "
+         f"Defects: {', '.join(analysis['edges']['defect_locations']) or 'none'}"),
+        ("Corners",   gr["corners_score"],
+         f"Defect corners: {', '.join(analysis['corners']['defect_corners']) or 'none'}"),
+        ("Surface",   gr["surface_score"],
+         f"Scratches {analysis['surface']['scratch_density']:.5f} · "
+         f"Anomalies {analysis['surface']['anomaly_density']:.5f}"),
+    ]
+    for cat, score, detail in rows:
         cc = st.columns([2, 1.5, 5, 2])
         cc[0].markdown(f"**{cat}**")
         cc[1].markdown(f"`{score}/10`")
@@ -203,8 +212,39 @@ def tab_overview(front_norm: np.ndarray, viz: dict,
         cc[3].markdown(_score_badge(score))
 
 
-# ─── Tab: Centering ──────────────────────────────────────────────────────────
-def tab_centering(front_norm: np.ndarray, viz: dict, centering: dict) -> None:
+def tab_front_back(front_norm, back_norm, front_analysis, back_analysis, viz) -> None:
+    """Side-by-side front/back comparison."""
+    col_f, col_b = st.columns(2)
+    with col_f:
+        st.subheader("Front")
+        st.image(bgr_to_rgb(front_norm), use_container_width=True)
+        if front_analysis:
+            _render_side_scores("Front", front_analysis)
+    with col_b:
+        st.subheader("Back")
+        if back_norm is not None:
+            st.image(bgr_to_rgb(back_norm), use_container_width=True)
+            if back_analysis:
+                _render_side_scores("Back", back_analysis)
+        else:
+            st.info("No back image uploaded.")
+            st.markdown("Upload a back image for combined front+back grading.")
+
+
+def _render_side_scores(label: str, analysis: Dict) -> None:
+    st.markdown(f"**{label} sub-scores:**")
+    items = [
+        ("Centering", analysis["centering"]["score"]),
+        ("Edges",     analysis["edges"]["score"]),
+        ("Corners",   analysis["corners"]["score"]),
+        ("Surface",   analysis["surface"]["score"]),
+    ]
+    cols = st.columns(4)
+    for col, (name, score) in zip(cols, items):
+        col.metric(name, f"{score}/10")
+
+
+def tab_centering(front_norm, viz, centering) -> None:
     c1, c2 = st.columns([3, 2])
     with c1:
         st.subheader("Centering Overlay")
@@ -216,26 +256,22 @@ def tab_centering(front_norm: np.ndarray, viz: dict, centering: dict) -> None:
         st.markdown("**Left / Right:**")
         st.progress(centering["left_pct"] / 100)
         st.code(f"{centering['lr_ratio']}  (L/R%)", language="")
-
         st.markdown("**Top / Bottom:**")
         st.progress(centering["top_pct"] / 100)
         st.code(f"{centering['tb_ratio']}  (T/B%)", language="")
-
+        if "front_lr" in centering:
+            st.divider()
+            st.markdown("**Per-side centering:**")
+            st.markdown(f"- Front: LR `{centering['front_lr']}` · TB `{centering['front_tb']}`")
+            st.markdown(f"- Back:  LR `{centering['back_lr']}` · TB `{centering['back_tb']}`")
         st.divider()
-        st.markdown("**PSA Centering Thresholds:**")
-        standards = {
-            "PSA 10": "55/45 or better",
-            "PSA 9":  "60/40 or better",
-            "PSA 8":  "65/35 or better",
-            "PSA 7":  "70/30 or better",
-        }
-        for g, s in standards.items():
+        st.markdown("**PSA Thresholds:**")
+        for g, s in [("PSA 10","55/45 or better"),("PSA 9","60/40"),
+                     ("PSA 8","65/35"),("PSA 7","70/30")]:
             st.markdown(f"- `{g}` → {s}")
 
 
-# ─── Tab: Edges & Corners ─────────────────────────────────────────────────────
-def tab_edges_corners(front_norm: np.ndarray, viz: dict,
-                      edges: dict, corners: dict) -> None:
+def tab_edges_corners(front_norm, viz, edges, corners) -> None:
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Edge Analysis")
@@ -244,57 +280,49 @@ def tab_edges_corners(front_norm: np.ndarray, viz: dict,
         st.markdown(f"**Overall Edge Score: `{edges['score']}/10`**")
         st.divider()
         for side, data in edges["sides"].items():
-            lvl = data["defect_level"]
-            icon = {"clean": "✅", "minor": "⚠️",
-                    "moderate": "🟠", "severe": "🔴"}.get(lvl, "❓")
+            lvl  = data["defect_level"]
+            icon = {"clean":"✅","minor":"⚠️","moderate":"🟠","severe":"🔴"}.get(lvl,"❓")
+            from_tag = f" *(from {data.get('from','front')})*" if "from" in data else ""
             st.markdown(
-                f"{icon} **{side.title()}** — {lvl.upper()} &nbsp;"
-                f"*(whitening={data['whitening']:.4f} · "
-                f"roughness={data['roughness']:.4f} · "
-                f"chipping={data['chipping']:.4f})*"
+                f"{icon} **{side.title()}**{from_tag} — {lvl.upper()} "
+                f"*(w={data['whitening']:.4f} r={data['roughness']:.4f} "
+                f"c={data['chipping']:.4f})*"
             )
-
     with c2:
         st.subheader("Corner Analysis")
         st.image(bgr_to_rgb(viz["corners"]), use_container_width=True,
-                 caption="Corner wear visualization")
+                 caption="Corner wear visualisation")
         st.markdown(f"**Overall Corner Score: `{corners['score']}/10`**")
         st.divider()
         for corner, data in corners["corners"].items():
-            lvl = data["defect_level"]
-            icon = {"sharp": "✅", "minor": "⚠️",
-                    "moderate": "🟠", "severe": "🔴"}.get(lvl, "❓")
-            label = corner.replace("_", " ").title()
+            lvl  = data["defect_level"]
+            icon = {"sharp":"✅","minor":"⚠️","moderate":"🟠","severe":"🔴"}.get(lvl,"❓")
+            from_tag = f" *(from {data.get('from','front')})*" if "from" in data else ""
             st.markdown(
-                f"{icon} **{label}** — {lvl.upper()} &nbsp;"
-                f"*(whitening={data['whitening']:.4f} · "
-                f"rounding={data['rounding']:.4f})*"
+                f"{icon} **{corner.replace('_',' ').title()}**{from_tag} — {lvl.upper()} "
+                f"*(w={data['whitening']:.4f} r={data['rounding']:.4f})*"
             )
 
 
-# ─── Tab: Surface ────────────────────────────────────────────────────────────
-def tab_surface(front_norm: np.ndarray, viz: dict, surface: dict) -> None:
+def tab_surface(front_norm, viz, surface) -> None:
     c1, c2 = st.columns([3, 2])
     with c1:
         st.subheader("Surface Defect Map")
         st.image(bgr_to_rgb(viz["surface"]), use_container_width=True,
                  caption="Red = scratches  |  Orange = anomalies / dents")
-
     with c2:
         st.subheader("Surface Metrics")
         st.metric("Surface Score", f"{surface['score']}/10")
         st.divider()
-
         metrics = [
-            ("Scratch Density",       surface["scratch_density"],   0.015, 0.04),
-            ("Print Line Indicator",  surface["print_line_indicator"], 0.3,  0.6),
-            ("Anomaly Density",       surface["anomaly_density"],   0.04, 0.08),
-            ("Surface Noise",         surface["surface_noise"],     0.35, 0.65),
+            ("Scratch Density",      surface["scratch_density"],  0.015, 0.04),
+            ("Print Line Indicator", surface["print_line_indicator"], 0.3, 0.6),
+            ("Anomaly Density",      surface["anomaly_density"],  0.04, 0.08),
+            ("Surface Noise",        surface["surface_noise"],    0.35, 0.65),
         ]
         for name, val, warn, bad in metrics:
             icon = "🟢" if val < warn else ("🟡" if val < bad else "🔴")
             st.markdown(f"{icon} **{name}:** `{val:.5f}`")
-
         st.divider()
         if surface["risk_flags"]:
             for flag in surface["risk_flags"]:
@@ -303,27 +331,138 @@ def tab_surface(front_norm: np.ndarray, viz: dict, surface: dict) -> None:
             st.success("✅ No significant surface defects detected")
 
 
-# ─── Tab: Full Overlay ───────────────────────────────────────────────────────
-def tab_full_overlay(front_norm: np.ndarray, viz: dict) -> None:
+def tab_full_overlay(front_norm, viz) -> None:
     st.subheader("Combined Defect Overlay")
-    st.markdown("All detected defects layered on the original image.")
+    st.markdown("*All detected defects layered on the original image.*")
     c1, c2 = st.columns(2)
     with c1:
-        st.image(bgr_to_rgb(front_norm), caption="Original",
-                 use_container_width=True)
+        st.image(bgr_to_rgb(front_norm), caption="Original", use_container_width=True)
     with c2:
         st.image(bgr_to_rgb(viz["full_overlay"]), caption="All Defects",
                  use_container_width=True)
 
 
+def tab_defect_evidence(defects: list, viz) -> None:
+    """Structured defect evidence list with bounding-box overlay."""
+    st.subheader("Defect Evidence")
+    st.markdown("*Every detected issue as a structured record with location and severity.*")
+
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.image(bgr_to_rgb(viz["defect_evidence"]), use_container_width=True,
+                 caption="Colour-coded bounding boxes per defect")
+    with c2:
+        if not defects:
+            st.success("✅ No defects recorded.")
+            return
+
+        dicts = [d if isinstance(d, dict) else d.to_dict() for d in defects]
+        severity_map = {"severe": ("🔴","#4a0a0a"), "moderate": ("🟠","#3a2a00"),
+                        "minor": ("⚠️","#2a2a00")}
+
+        counts = {"severe": 0, "moderate": 0, "minor": 0}
+        for d in dicts:
+            if d["severity"] in counts:
+                counts[d["severity"]] += 1
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("🔴 Severe",   counts["severe"])
+        mc2.metric("🟠 Moderate", counts["moderate"])
+        mc3.metric("⚠️ Minor",    counts["minor"])
+
+        st.divider()
+        for d in dicts:
+            sev = d.get("severity", "minor")
+            icon, bg = severity_map.get(sev, ("❓", "#1a1a1a"))
+            st.markdown(
+                f'<div style="background:{bg};padding:6px 10px;border-radius:5px;margin:3px 0;">'
+                f'{icon} <b>{d["defect_type"].replace("_"," ").title()}</b> '
+                f'— {d["location"]} ({d["side"]}) <br/>'
+                f'<span style="color:#aaa;font-size:0.82em;">{d["explanation"]}'
+                f' | {d["metric"]}={d["metric_value"]:.4f}</span></div>',
+                unsafe_allow_html=True
+            )
+
+
+def tab_grade_trace(gr: Dict, grade_trace: Dict, viz) -> None:
+    """Full grade trace audit view."""
+    st.subheader("Grade Trace")
+    st.markdown("*Complete scoring audit trail — from sub-scores through cap evaluation to final grade.*")
+
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.image(bgr_to_rgb(viz["grade_trace"]), use_container_width=True)
+    with c2:
+        st.markdown("**Scoring Summary:**")
+        st.markdown(f"- Weighted sum (pre-cap): `{grade_trace.get('weighted_sum', 0):.3f}`")
+        eff_cap = grade_trace.get("effective_cap")
+        if eff_cap is not None:
+            st.markdown(f"- Effective cap: `{eff_cap}`")
+            st.markdown(f"- Post-cap: `{grade_trace.get('post_cap_grade', 0):.3f}`")
+        else:
+            st.markdown("- No caps applied")
+        st.markdown(f"- **Final rounded grade: `{grade_trace.get('final_rounded_grade', 0)}`**")
+        st.divider()
+        caps = grade_trace.get("caps_evaluated", [])
+        if caps:
+            triggered_caps = [c for c in caps if c.get("triggered")]
+            safe_caps      = [c for c in caps if not c.get("triggered")]
+            if triggered_caps:
+                st.markdown("**🔒 Triggered caps:**")
+                for c in triggered_caps:
+                    st.error(f"Cap {c['cap']}: {c['description']}")
+            if safe_caps:
+                with st.expander(f"Non-triggered cap rules ({len(safe_caps)})"):
+                    for c in safe_caps:
+                        st.markdown(f"✅ Cap {c['cap']}: {c['description']}")
+
+
+# ─── Comparison Mode ──────────────────────────────────────────────────────────
+
+def render_comparison_section() -> None:
+    """Card comparison — multiple cards ranked best to worst."""
+    st.divider()
+    st.subheader("🆚 Card Comparison")
+
+    if not st.session_state.comparison_cards:
+        st.info("Grade a card above, then click **Add to Comparison** to start comparing multiple cards.")
+        return
+
+    cards = st.session_state.comparison_cards
+    st.markdown(f"**{len(cards)} card(s) in comparison.** Sorted best → worst.")
+
+    if st.button("🗑 Clear Comparison"):
+        st.session_state.comparison_cards = []
+        st.rerun()
+
+    # Sort by grade desc
+    sorted_cards = sorted(cards, key=lambda c: -c["grade"])
+
+    # Header row
+    cols = st.columns([1, 2, 1.5, 1.5, 1.5, 1.5, 2])
+    for col, h in zip(cols, ["Rank","Name","Grade","Band","Centering","Corners","Rec"]):
+        col.markdown(f"**{h}**")
+    st.markdown("---")
+
+    for i, card in enumerate(sorted_cards, 1):
+        cc = st.columns([1, 2, 1.5, 1.5, 1.5, 1.5, 2])
+        grade = card["grade"]
+        grade_col = "#22c55e" if grade >= 9 else "#60a5fa" if grade >= 7 else "#ef4444"
+        cc[0].markdown(f"**{i}**")
+        cc[1].markdown(card["name"])
+        cc[2].markdown(f"<span style='color:{grade_col};font-weight:700;font-size:1.1em;'>"
+                        f"{grade}</span>", unsafe_allow_html=True)
+        cc[3].markdown(card.get("band", "—"))
+        cc[4].markdown(f"`{card.get('centering_lr','?')}`")
+        cc[5].markdown(f"`{card.get('corners_score','?')}/10`")
+        rec_icons = {"GRADE":"✅","CONDITIONAL":"⚠️","DO NOT GRADE":"❌"}
+        cc[6].markdown(f"{rec_icons.get(card.get('rec',''),'?')} {card.get('rec','')}")
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 def _score_badge(score: float) -> str:
-    if score >= 9:
-        return "✅ Excellent"
-    elif score >= 7:
-        return "⚠️ Good"
-    elif score >= 5:
-        return "🟠 Fair"
+    if score >= 9:  return "✅ Excellent"
+    if score >= 7:  return "⚠️ Good"
+    if score >= 5:  return "🟠 Fair"
     return "🔴 Poor"
 
 
@@ -331,127 +470,179 @@ def _show_landing() -> None:
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown("### 📷 For Best Results")
-        st.markdown("""
-- Flat, steady surface
-- No direct flash or strong glare
-- Full card visible, slight padding OK
-- 1+ MP resolution preferred
-        """)
+        st.markdown("### 📷 Best Results")
+        st.markdown("- Flat, neutral background\n- Diffuse lighting, no glare\n"
+                    "- Full card in frame\n- Remove from sleeve/toploader\n- ≥ 1 MP")
     with c2:
         st.markdown("### 🔬 What We Detect")
-        st.markdown("""
-- Border centering (L/R, T/B ratios)
-- Edge whitening, chipping, roughness
-- Corner wear, rounding, whitening
-- Surface scratches, print lines, dents
-        """)
+        st.markdown("- Border centering (L/R, T/B)\n- Edge whitening/chipping\n"
+                    "- Corner wear/rounding\n- Surface scratches/dents/print lines")
     with c3:
-        st.markdown("### 📈 Grade → Value")
-        st.markdown("""
-- **10** → Premium slab — grade it
-- **9** → High demand → grade for value
-- **8** → Card-dependent → conditional
-- **7** → Low ROI most sets
-- **≤6** → Sell raw or hold
-        """)
+        st.markdown("### 🎴 Card Profiles")
+        st.markdown("- **Pokémon Modern** — strict centering\n"
+                    "- **Pokémon Vintage** — lenient center, critical surface\n"
+                    "- **Sports Chrome** — high surface sensitivity\n"
+                    "- **Sports Paper** — standard tolerances\n"
+                    "- **TCG Generic** — balanced defaults")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
 def main() -> None:
-    show_debug = render_sidebar()
+    profile_name, show_debug, run_qgate = render_sidebar()
 
-    st.title("🃏 AI Card Grader")
-    st.markdown("*Automated PSA-style grading analysis — fully local, no paid APIs*")
+    st.title("🃏 AI Card Grader v2")
+    st.markdown("*Automated PSA-style grading · Card profiles · Defect evidence · Grade trace*")
 
+    # ── Upload section ────────────────────────────────────────────────────────
     col_front, col_back = st.columns(2)
     with col_front:
         st.subheader("Front of Card")
-        front_file = st.file_uploader(
-            "Upload front image", type=["jpg", "jpeg", "png", "webp"], key="front"
-        )
+        front_file = st.file_uploader("Upload front image",
+                                       type=["jpg","jpeg","png","webp"], key="front")
     with col_back:
         st.subheader("Back of Card *(optional)*")
-        back_file = st.file_uploader(
-            "Upload back image", type=["jpg", "jpeg", "png", "webp"], key="back"
-        )
+        back_file = st.file_uploader("Upload back image",
+                                      type=["jpg","jpeg","png","webp"], key="back")
 
     if front_file is None:
         _show_landing()
+        render_comparison_section()
         return
 
-    # ── Load & normalize ────────────────────────────────────────────────────
+    # ── Load & normalize ──────────────────────────────────────────────────────
     with st.spinner("🔬 Running grading analysis…"):
         try:
             front_raw = load_image(front_file.read())
             if front_raw is None:
                 st.error("Could not decode front image. Please try a different file.")
                 return
-
             front_norm, detected = normalize_card(front_raw)
 
+            back_raw  = None
             back_norm = None
             if back_file is not None:
                 back_raw = load_image(back_file.read())
                 if back_raw is not None:
                     back_norm, _ = normalize_card(back_raw)
 
-            results = grade_card(front_norm, back_norm)
-
+            results = grade_card_full(
+                front_norm, back_norm,
+                profile_name=profile_name,
+                run_quality_gate=run_qgate,
+                front_raw=front_raw,
+                back_raw=back_raw,
+            )
         except Exception as exc:
             st.error(f"Analysis failed: {exc}")
             if show_debug:
                 st.code(traceback.format_exc())
             return
 
-    gr      = results["grade_result"]
-    analysis = results["analysis"]
-    viz     = results["visualizations"]
+    gr          = results["grade_result"]
+    grade_trace = results["grade_trace"]
+    analysis    = results["analysis"]
+    front_an    = results["front_analysis"]
+    back_an     = results["back_analysis"]
+    viz         = results["visualizations"]
+    defects     = results["defects"]
+    qg          = results.get("quality_gate")
 
     st.markdown("---")
 
-    # ── Grade banner ─────────────────────────────────────────────────────────
+    # ── Quality gate ──────────────────────────────────────────────────────────
+    if qg and run_qgate:
+        render_quality_gate(qg)
+        if qg.get("decision") == "fail":
+            st.error("⛔ Image quality insufficient for reliable grading. "
+                     "Please recapture the card image.")
+            if not st.checkbox("Grade anyway (not recommended)"):
+                render_comparison_section()
+                return
+
+    # ── Grade banner ──────────────────────────────────────────────────────────
     render_grade_banner(gr)
     render_score_metrics(gr, analysis)
-
     st.markdown("---")
 
-    # ── Analysis tabs ────────────────────────────────────────────────────────
-    t1, t2, t3, t4, t5 = st.tabs([
+    # ── Analysis tabs ─────────────────────────────────────────────────────────
+    tabs = st.tabs([
         "📊 Overview",
+        "📸 Front vs Back",
         "🎯 Centering",
         "🔲 Edges & Corners",
         "✨ Surface",
         "🗺️ Full Overlay",
+        "🧬 Defect Evidence",
+        "📊 Grade Trace",
     ])
 
-    with t1:
-        tab_overview(front_norm, viz, gr, analysis, detected)
-    with t2:
+    with tabs[0]:
+        tab_overview(front_norm, viz, gr, analysis, detected, profile_name)
+    with tabs[1]:
+        tab_front_back(front_norm, back_norm, front_an, back_an, viz)
+    with tabs[2]:
         tab_centering(front_norm, viz, analysis["centering"])
-    with t3:
+    with tabs[3]:
         tab_edges_corners(front_norm, viz, analysis["edges"], analysis["corners"])
-    with t4:
+    with tabs[4]:
         tab_surface(front_norm, viz, analysis["surface"])
-    with t5:
+    with tabs[5]:
         tab_full_overlay(front_norm, viz)
+    with tabs[6]:
+        tab_defect_evidence(defects, viz)
+    with tabs[7]:
+        tab_grade_trace(gr, grade_trace, viz)
 
-    # ── Debug ────────────────────────────────────────────────────────────────
+    # ── Add to comparison ─────────────────────────────────────────────────────
+    st.markdown("---")
+    ccol1, ccol2, _ = st.columns([2, 2, 4])
+    with ccol1:
+        card_label = st.text_input("Card label for comparison",
+                                    placeholder="e.g. Charizard Holo #4",
+                                    label_visibility="collapsed")
+    with ccol2:
+        if st.button("➕ Add to Comparison"):
+            label = card_label.strip() or f"Card {len(st.session_state.comparison_cards)+1}"
+            st.session_state.comparison_cards.append({
+                "name":          label,
+                "grade":         gr["grade"],
+                "band":          gr["grade_band"],
+                "rec":           gr["recommendation"],
+                "centering_lr":  gr["centering_lr"],
+                "corners_score": gr["corners_score"],
+                "profile":       profile_name,
+            })
+            st.success(f"Added **{label}** to comparison.")
+
+    # ── Download artifacts ────────────────────────────────────────────────────
+    card_id = (card_label.strip().replace(" ", "_") or "card") if card_label else "card"
+    zip_bytes = build_download_zip(card_id, front_norm, back_norm, results)
+    st.download_button(
+        label="⬇️ Download All Grading Artifacts (ZIP)",
+        data=zip_bytes,
+        file_name=f"{card_id}_grade_artifacts.zip",
+        mime="application/zip",
+    )
+
+    # ── Comparison section ────────────────────────────────────────────────────
+    render_comparison_section()
+
+    # ── Debug ─────────────────────────────────────────────────────────────────
     if show_debug:
         with st.expander("🔧 Raw Analysis Data"):
             def _safe(d):
-                return {k: v for k, v in d.items()
-                        if not isinstance(v, np.ndarray)}
-
+                return {k: v for k, v in d.items() if not isinstance(v, np.ndarray)}
             st.json({
-                "grade_result": _safe(gr),
-                "centering":    _safe(analysis["centering"]),
-                "edges":        {
-                    **_safe(analysis["edges"]),
-                    "sides": analysis["edges"]["sides"],
-                },
-                "corners":      analysis["corners"],
-                "surface":      _safe(analysis["surface"]),
+                "grade_result":  _safe(gr),
+                "grade_trace":   grade_trace,
+                "centering":     _safe(analysis["centering"]),
+                "edges":         {**_safe(analysis["edges"]), "sides": analysis["edges"]["sides"]},
+                "corners":       analysis["corners"],
+                "surface":       _safe(analysis["surface"]),
+                "defects":       defects_to_dicts(defects),
+                "quality_gate":  qg,
+                "profile_used":  results.get("profile_used"),
             })
 
 

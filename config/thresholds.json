@@ -1,0 +1,29 @@
+{
+  "quality_gate": {
+    "blur_laplacian_fail":     40,
+    "blur_laplacian_warn":     90,
+    "glare_l_threshold":       238,
+    "glare_ratio_warn":        0.035,
+    "glare_ratio_fail":        0.12,
+    "exposure_min_fail":       30,
+    "exposure_min_warn":       55,
+    "exposure_max_warn":       210,
+    "exposure_max_fail":       230,
+    "shadow_dark_threshold":   35,
+    "shadow_ratio_warn":       0.20,
+    "shadow_ratio_fail":       0.40,
+    "min_card_area_ratio":     0.20,
+    "sleeve_uniformity_ratio": 0.45,
+    "sleeve_brightness_min":   195,
+    "sleeve_confidence_thresh":0.52
+  },
+  "preprocessing": {
+    "card_width":              500,
+    "card_height":             700,
+    "min_contour_area_ratio":  0.20
+  },
+  "artifact_export": {
+    "jpeg_quality":            92,
+    "summary_csv_filename":    "grading_summary.csv"
+  }
+}
