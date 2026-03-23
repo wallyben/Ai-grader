@@ -17,6 +17,8 @@ from grader import (
     list_profiles, get_profile_display_names,
     build_download_zip, defects_to_dicts,
     bgr_to_rgb,
+    build_pricing, CardPricingBundle,
+    generate_report,
 )
 
 # ─── Page config ──────────────────────────────────────────────────────────────
@@ -63,8 +65,44 @@ def render_sidebar() -> tuple:
         st.divider()
         show_debug = st.checkbox("Show raw data / debug", False)
         run_qgate  = st.checkbox("Run quality gate", True)
-        st.divider()
 
+        # ── ROI / Pricing ─────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("### 💰 ROI Analysis *(optional)*")
+        st.caption("Enter pricing to get a grading ROI decision.")
+
+        enable_roi = st.checkbox("Enable ROI analysis", False)
+        pricing_bundle: Optional[CardPricingBundle] = None
+
+        if enable_roi:
+            card_name_roi = st.text_input("Card name", placeholder="e.g. Charizard Holo #4",
+                                           key="roi_card_name")
+            raw_price = st.number_input("Raw (ungraded) value ($)", min_value=0.0,
+                                         value=0.0, step=1.0, format="%.2f")
+            grading_cost = st.number_input("Grading fee ($)", min_value=0.0,
+                                            value=25.0, step=1.0, format="%.2f")
+
+            st.caption("PSA slab prices *(leave 0 to auto-estimate)*")
+            psa8  = st.number_input("PSA 8 ($)", min_value=0.0, value=0.0,
+                                     step=1.0, format="%.2f", key="psa8")
+            psa9  = st.number_input("PSA 9 ($)", min_value=0.0, value=0.0,
+                                     step=1.0, format="%.2f", key="psa9")
+            psa10 = st.number_input("PSA 10 ($)", min_value=0.0, value=0.0,
+                                     step=1.0, format="%.2f", key="psa10")
+
+            if raw_price > 0:
+                pricing_bundle = build_pricing(
+                    card_name=card_name_roi or "Unknown",
+                    raw_price=raw_price,
+                    grading_cost=grading_cost,
+                    psa_8=psa8  if psa8  > 0 else None,
+                    psa_9=psa9  if psa9  > 0 else None,
+                    psa_10=psa10 if psa10 > 0 else None,
+                )
+            else:
+                st.warning("Enter a raw value > 0 to compute ROI.")
+
+        st.divider()
         st.markdown("### 📷 Image Tips")
         st.markdown("""
 - Flat on neutral background
@@ -79,7 +117,7 @@ def render_sidebar() -> tuple:
                         ("7","🔵 Near Mint"),("6","🟡 EX-MT"),("5","🟠 Excellent"),("≤4","🔴 VG or below")]:
             st.markdown(f"`{g}` {lbl}")
 
-    return profile_name, show_debug, run_qgate
+    return profile_name, show_debug, run_qgate, pricing_bundle
 
 
 # ─── Quality Gate Widget ──────────────────────────────────────────────────────
@@ -383,7 +421,8 @@ def tab_defect_evidence(defects: list, viz) -> None:
             )
 
 
-def tab_grade_trace(gr: Dict, grade_trace: Dict, viz) -> None:
+def tab_grade_trace(gr: Dict, grade_trace: Dict, viz,
+                    calibration: Optional[Dict] = None) -> None:
     """Full grade trace audit view."""
     st.subheader("Grade Trace")
     st.markdown("*Complete scoring audit trail — from sub-scores through cap evaluation to final grade.*")
@@ -414,6 +453,108 @@ def tab_grade_trace(gr: Dict, grade_trace: Dict, viz) -> None:
                 with st.expander(f"Non-triggered cap rules ({len(safe_caps)})"):
                     for c in safe_caps:
                         st.markdown(f"✅ Cap {c['cap']}: {c['description']}")
+
+    # ── Calibration block ─────────────────────────────────────────────────────
+    if calibration:
+        st.divider()
+        st.markdown("**🎯 Calibration (PSA Alignment)**")
+        cal_g  = calibration.get("calibrated_grade", "—")
+        adj    = calibration.get("calibration_adjustment", 0.0)
+        bias   = calibration.get("bias", 0.0)
+        cal_c  = calibration.get("calibrated_confidence", "—")
+        # Derive raw grade from calibrated grade and adjustment
+        raw_g  = round(cal_g - adj, 1) if isinstance(cal_g, float) and isinstance(adj, float) else "—"
+
+        cc1, cc2, cc3 = st.columns(3)
+        cc1.metric("Raw Grade",        raw_g)
+        cc2.metric("Calibrated Grade", cal_g,
+                   delta=f"{adj:+.1f}" if isinstance(adj, float) and adj != 0 else "no change")
+        cc3.metric("Calibrated Confidence",
+                   f"{int(cal_c*100)}%" if isinstance(cal_c, float) else cal_c)
+        st.caption(
+            f"Dataset bias: `{bias:+.3f}` · "
+            f"Adjustment applied: `{adj:+.2f}` · "
+            f"Std dev: `{calibration.get('std_dev', 0):.3f}`"
+        )
+
+
+def tab_roi(roi: Dict) -> None:
+    """ROI analysis display."""
+    decision = roi["decision"]
+    decision_colors = {
+        "STRONG GRADE": ("#0d2b1a", "#22c55e"),
+        "GRADE":        ("#0d2b1a", "#22c55e"),
+        "CONDITIONAL":  ("#2b1f00", "#f59e0b"),
+        "HOLD RAW":     ("#2b1f00", "#f59e0b"),
+        "DO NOT GRADE": ("#2b0a0a", "#ef4444"),
+    }
+    bg, fg = decision_colors.get(decision, ("#1a1a2e", "#ffffff"))
+
+    st.markdown(f"""
+<div style="background:{bg};border:1px solid {fg}33;border-radius:10px;
+            padding:16px 20px;margin-bottom:12px;">
+  <div style="font-size:1.6em;font-weight:900;color:{fg};">{decision}</div>
+  <div style="color:#aaa;font-size:0.9em;margin-top:4px;">
+    Card: <b>{roi['card_name']}</b> &nbsp;·&nbsp;
+    Grade: <b>{roi['estimated_grade']}</b> &nbsp;·&nbsp;
+    Confidence: <b>{int(roi['confidence']*100)}%</b>
+    {"&nbsp;·&nbsp;<i>Prices partially estimated</i>" if roi.get('prices_estimated') else ""}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # Financial metrics
+    c1, c2, c3, c4 = st.columns(4)
+    profit_delta = f"+${roi['profit']:.2f}" if roi["profit"] >= 0 else f"-${abs(roi['profit']):.2f}"
+    c1.metric("Expected Value",  f"${roi['expected_value']:.2f}")
+    c2.metric("Est. Profit",     profit_delta)
+    c3.metric("ROI",             f"{roi['roi_percent']:.1f}%")
+    c4.metric("Downside Risk",   f"{roi['downside_risk_pct']:.1f}%")
+
+    st.divider()
+    col_l, col_r = st.columns(2)
+
+    with col_l:
+        st.markdown("**Price Inputs**")
+        price_rows = [
+            ("Raw value",     roi["raw_value"]),
+            ("Grading fee",   roi["grading_cost"]),
+            ("Total invested",roi["total_investment"]),
+            ("PSA 8 value",   roi["psa_8_value"]),
+            ("PSA 9 value",   roi["psa_9_value"]),
+            ("PSA 10 value",  roi["psa_10_value"]),
+        ]
+        for label, val in price_rows:
+            st.markdown(f"- **{label}:** `${val:.2f}`")
+        if roi.get("prices_estimated"):
+            st.caption("⚠️ One or more PSA prices were estimated using default multipliers.")
+
+    with col_r:
+        st.markdown("**Grade Probability Distribution**")
+        probs = roi["grade_probabilities"]
+        for tier, key in [("PSA 10", "psa_10"), ("PSA 9", "psa_9"),
+                           ("PSA 8", "psa_8"), ("Below PSA 8", "below_psa_8")]:
+            pct = probs[key] * 100
+            bar_color = "#22c55e" if key == "psa_10" else "#60a5fa" if key == "psa_9" else \
+                        "#f59e0b" if key == "psa_8" else "#ef4444"
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">'
+                f'<span style="width:90px;font-size:0.85em;">{tier}</span>'
+                f'<div style="flex:1;background:#1a1a2e;border-radius:4px;height:14px;">'
+                f'<div style="width:{pct:.1f}%;background:{bar_color};height:100%;border-radius:4px;"></div>'
+                f'</div>'
+                f'<span style="width:42px;text-align:right;font-size:0.85em;">{pct:.1f}%</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+    st.markdown("**Scenario Analysis**")
+    sc1, sc2 = st.columns(2)
+    sc1.metric("Best case (PSA 10)",  f"${roi['best_case_profit']:+.2f}")
+    sc2.metric("Worst case (<PSA 8)", f"${roi['worst_case_profit']:+.2f}")
+    if roi.get("confidence_adjusted"):
+        st.info("ℹ️ Confidence below 90% — decision capped conservatively.")
 
 
 # ─── Comparison Mode ──────────────────────────────────────────────────────────
@@ -489,7 +630,7 @@ def _show_landing() -> None:
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    profile_name, show_debug, run_qgate = render_sidebar()
+    profile_name, show_debug, run_qgate, pricing_bundle = render_sidebar()
 
     st.title("🃏 AI Card Grader v2")
     st.markdown("*Automated PSA-style grading · Card profiles · Defect evidence · Grade trace*")
@@ -532,6 +673,7 @@ def main() -> None:
                 run_quality_gate=run_qgate,
                 front_raw=front_raw,
                 back_raw=back_raw,
+                pricing=pricing_bundle,
             )
         except Exception as exc:
             st.error(f"Analysis failed: {exc}")
@@ -539,14 +681,16 @@ def main() -> None:
                 st.code(traceback.format_exc())
             return
 
-    gr          = results["grade_result"]
-    grade_trace = results["grade_trace"]
-    analysis    = results["analysis"]
-    front_an    = results["front_analysis"]
-    back_an     = results["back_analysis"]
-    viz         = results["visualizations"]
-    defects     = results["defects"]
-    qg          = results.get("quality_gate")
+    gr           = results["grade_result"]
+    grade_trace  = results["grade_trace"]
+    analysis     = results["analysis"]
+    front_an     = results["front_analysis"]
+    back_an      = results["back_analysis"]
+    viz          = results["visualizations"]
+    defects      = results["defects"]
+    qg           = results.get("quality_gate")
+    roi_result   = results.get("roi")
+    cal_result   = results.get("calibration")
 
     st.markdown("---")
 
@@ -566,7 +710,7 @@ def main() -> None:
     st.markdown("---")
 
     # ── Analysis tabs ─────────────────────────────────────────────────────────
-    tabs = st.tabs([
+    tab_labels = [
         "📊 Overview",
         "📸 Front vs Back",
         "🎯 Centering",
@@ -574,8 +718,11 @@ def main() -> None:
         "✨ Surface",
         "🗺️ Full Overlay",
         "🧬 Defect Evidence",
-        "📊 Grade Trace",
-    ])
+        "📈 Grade Trace",
+    ]
+    if roi_result is not None:
+        tab_labels.append("💰 ROI Analysis")
+    tabs = st.tabs(tab_labels)
 
     with tabs[0]:
         tab_overview(front_norm, viz, gr, analysis, detected, profile_name)
@@ -592,7 +739,10 @@ def main() -> None:
     with tabs[6]:
         tab_defect_evidence(defects, viz)
     with tabs[7]:
-        tab_grade_trace(gr, grade_trace, viz)
+        tab_grade_trace(gr, grade_trace, viz, cal_result)
+    if roi_result is not None:
+        with tabs[8]:
+            tab_roi(roi_result)
 
     # ── Add to comparison ─────────────────────────────────────────────────────
     st.markdown("---")
@@ -617,13 +767,36 @@ def main() -> None:
 
     # ── Download artifacts ────────────────────────────────────────────────────
     card_id = (card_label.strip().replace(" ", "_") or "card") if card_label else "card"
+    dl1, dl2 = st.columns(2)
+
     zip_bytes = build_download_zip(card_id, front_norm, back_norm, results)
-    st.download_button(
-        label="⬇️ Download All Grading Artifacts (ZIP)",
-        data=zip_bytes,
-        file_name=f"{card_id}_grade_artifacts.zip",
-        mime="application/zip",
-    )
+    with dl1:
+        st.download_button(
+            label="⬇️ Download Grading Artifacts (ZIP)",
+            data=zip_bytes,
+            file_name=f"{card_id}_grade_artifacts.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+
+    with dl2:
+        try:
+            display_name = card_label.strip() if card_label and card_label.strip() else card_id
+            pdf_bytes = generate_report(
+                card_name=display_name,
+                results=results,
+                roi=roi_result,
+                calibration=cal_result,
+            )
+            st.download_button(
+                label="📄 Download PDF Report",
+                data=pdf_bytes,
+                file_name=f"{card_id}_grade_report.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as pdf_err:
+            st.warning(f"PDF generation unavailable: {pdf_err}")
 
     # ── Comparison section ────────────────────────────────────────────────────
     render_comparison_section()

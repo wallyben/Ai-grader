@@ -16,8 +16,16 @@
 | **Surface Analysis** | FFT print-line detection, morphological scratch detection, anomaly heatmaps |
 | **Deterministic Grading** | Rule-based hard caps + weighted scoring (no randomness) |
 | **Visual Overlays** | Colour-coded defect maps on every analysis layer |
-| **"Should I Grade?" Engine** | GRADE / CONDITIONAL / DO NOT GRADE decision with reasoning |
-| **Streamlit UI** | Full interactive web interface |
+| **Card Profiles** | Pokémon Modern/Vintage, Sports Chrome/Paper, TCG Generic — per-type thresholds |
+| **Front + Back Grading** | Upload both sides for combined worst-of scoring |
+| **Defect Evidence** | Structured defect list with bounding-box overlays and severity |
+| **Grade Trace** | Full audit trail from sub-scores through cap evaluation to final grade |
+| **Quality Gate** | Image quality check before grading (blur, brightness, contrast, size) |
+| **PSA Calibration** | Piecewise linear bias correction aligning system grades to real PSA outcomes |
+| **ROI Analysis** | Expected value, profit, ROI%, and 5-tier grading decision (STRONG GRADE → DO NOT GRADE) |
+| **PDF Report** | Professional per-card grading report with images, scores, ROI, and defect list |
+| **Batch CLI** | `python batch_grade.py cards/` — grade a folder of cards to CSV |
+| **Streamlit UI** | Full interactive web interface with comparison mode and artifact download |
 
 ---
 
@@ -81,12 +89,24 @@ pytest tests/ -v
 
 ### Recommendation Engine
 
+Basic recommendation (no pricing):
+
 | Grade | Decision |
 |---|---|
 | ≥ 9.0 | **GRADE** — strong ROI potential |
 | 8.0–8.5 | **CONDITIONAL** — grade if high-demand card |
 | 7.0–7.5 | **CONDITIONAL** — borderline ROI |
 | ≤ 6.5 | **DO NOT GRADE** — grading cost > slab premium |
+
+ROI-based decision (with pricing, Phase 2):
+
+| Decision | Criteria |
+|---|---|
+| **STRONG GRADE** | ROI > 150% and profit > $60 and low downside risk |
+| **GRADE** | ROI > 40% and low downside risk |
+| **CONDITIONAL** | ROI > 5% or positive profit on grade ≥ 7 |
+| **HOLD RAW** | Positive profit but doesn't meet grading thresholds |
+| **DO NOT GRADE** | Negative expected profit |
 
 ---
 
@@ -95,21 +115,40 @@ pytest tests/ -v
 ```
 /
 ├── app.py                    # Streamlit UI entry point
+├── batch_grade.py            # CLI batch grading tool
 ├── requirements.txt
 ├── README.md
 ├── grader/
-│   ├── __init__.py           # grade_card() pipeline + public API
+│   ├── __init__.py           # grade_card_full() pipeline + public API
 │   ├── preprocessing.py      # Boundary detection + perspective warp
 │   ├── centering.py          # Inner border detection + ratio scoring
 │   ├── edges.py              # Edge whitening / chipping / roughness
 │   ├── corners.py            # Corner wear / rounding / whitening
 │   ├── surface.py            # Scratches / print lines / anomalies
 │   ├── scoring.py            # Deterministic grading engine + caps
-│   └── visualize.py          # Overlay drawing + summary card
-└── tests/
-    ├── conftest.py           # Synthetic card fixtures
-    ├── test_smoke.py         # Module-level smoke tests (structural)
-    └── test_grading.py       # Grading logic unit tests
+│   ├── profiles.py           # Card type profiles (Pokémon, Sports, etc.)
+│   ├── combined_scoring.py   # Front + back worst-of merge
+│   ├── quality_gate.py       # Image quality assessment
+│   ├── defects.py            # Structured defect extraction
+│   ├── artifacts.py          # ZIP export + CSV batch output
+│   ├── visualize.py          # Overlay drawing + summary card
+│   ├── calibration.py        # PSA alignment engine (Phase 2)
+│   ├── pricing.py            # CardPricing / CardPricingBundle (Phase 2)
+│   ├── roi.py                # ROI engine + 5-tier decision (Phase 2)
+│   └── report.py             # PDF report generator (Phase 2)
+└── tests/                    # 314 tests, 0 failures
+    ├── conftest.py
+    ├── test_smoke.py
+    ├── test_grading.py
+    ├── test_combined.py
+    ├── test_defects.py
+    ├── test_profiles.py
+    ├── test_quality_gate.py
+    ├── test_batch.py
+    ├── test_calibration.py   # Phase 2
+    ├── test_roi.py           # Phase 2
+    ├── test_decision_engine.py # Phase 2
+    └── test_batch_roi.py     # Phase 2
 ```
 
 ---
@@ -172,13 +211,16 @@ pytest tests/ -v
 
 ## Upgrade Roadmap
 
-1. **ML Corner Classifier** — train a lightweight CNN on labelled corner crops (sharp / minor / moderate / severe) using a small manually-labelled dataset
-2. **Gloss/Holo Detection** — separate analysis path for foil/holo cards which have different surface reflection characteristics
-3. **Card Set Recognition** — OCR + template matching to identify card set and pull market price data for smarter grading ROI advice
-4. **Batch Mode** — CLI `python grade_batch.py cards/` to process folders
-5. **PDF Report Export** — generate per-card grading reports
-6. **Calibration Dataset** — accumulate user-submitted labelled cards to improve centering edge detection via fine-tuned thresholds
-7. **Multi-card Detection** — detect and grade multiple cards in a single photo
+✅ = completed
+
+1. ✅ **Batch Mode** — `python batch_grade.py cards/` to process folders
+2. ✅ **PDF Report Export** — professional per-card grading reports via ReportLab
+3. ✅ **PSA Calibration** — piecewise linear bias correction using real-world alignment data
+4. ✅ **ROI Analysis** — expected value, profit, and 5-tier grading decision engine
+5. **ML Corner Classifier** — train a lightweight CNN on labelled corner crops (sharp / minor / moderate / severe)
+6. **Gloss/Holo Detection** — separate analysis path for foil/holo cards with different surface reflection
+7. **Card Set Recognition** — OCR + template matching to identify card set and pull live market prices
+8. **Multi-card Detection** — detect and grade multiple cards in a single photo
 
 ---
 
