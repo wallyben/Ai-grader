@@ -39,21 +39,21 @@ try:
         Table,
         TableStyle,
     )
+    # ─── Colour palette ────────────────────────────────────────────────────────
+    _C_DARK   = colors.HexColor("#0d1117")
+    _C_PANEL  = colors.HexColor("#161b22")
+    _C_GREEN  = colors.HexColor("#22c55e")
+    _C_BLUE   = colors.HexColor("#60a5fa")
+    _C_AMBER  = colors.HexColor("#f59e0b")
+    _C_RED    = colors.HexColor("#ef4444")
+    _C_GREY   = colors.HexColor("#6b7280")
+    _C_WHITE  = colors.HexColor("#f9fafb")
+    _C_BORDER = colors.HexColor("#30363d")
     _REPORTLAB_AVAILABLE = True
 except ImportError:
     _REPORTLAB_AVAILABLE = False
-
-
-# ─── Colour palette ───────────────────────────────────────────────────────────
-_C_DARK   = colors.HexColor("#0d1117")
-_C_PANEL  = colors.HexColor("#161b22")
-_C_GREEN  = colors.HexColor("#22c55e")
-_C_BLUE   = colors.HexColor("#60a5fa")
-_C_AMBER  = colors.HexColor("#f59e0b")
-_C_RED    = colors.HexColor("#ef4444")
-_C_GREY   = colors.HexColor("#6b7280")
-_C_WHITE  = colors.HexColor("#f9fafb")
-_C_BORDER = colors.HexColor("#30363d")
+    _C_DARK = _C_PANEL = _C_GREEN = _C_BLUE = _C_AMBER = None
+    _C_RED  = _C_GREY  = _C_WHITE = _C_BORDER = None
 
 
 def _grade_color(grade: float):
@@ -113,7 +113,7 @@ def _cv2_to_rl_image(
 
 # ─── Style registry ───────────────────────────────────────────────────────────
 
-def _make_styles() -> Dict[str, ParagraphStyle]:
+def _make_styles() -> Dict[str, Any]:
     base = getSampleStyleSheet()
     return {
         "title": ParagraphStyle(

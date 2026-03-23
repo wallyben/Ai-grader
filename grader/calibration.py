@@ -1,13 +1,24 @@
 """
-Calibration Engine — Phase 2
+Calibration Engine — Phase 2 + Phase 3
 Aligns system grades to real-world PSA outcomes using bias/variance correction
 and piecewise linear interpolation.
+
+Phase 3 additions:
+- update_from_outcomes(): ingest real evaluation records to re-fit calibration
+- Rolling performance tracking (n most-recent outcomes)
+- Calibration history log (every time the model is updated)
+- save_state() / load_state() for persistence between sessions
 
 Apply AFTER scoring but BEFORE final output to correct systematic over/under-grading.
 All outputs are fully deterministic — no randomness.
 """
 
+from __future__ import annotations
+
+import json
 import math
+import os
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -32,41 +43,78 @@ DEFAULT_CALIBRATION_DATA: List[Dict] = [
     {"predicted_grade": 3.0,  "actual_grade": 3},
 ]
 
+# Maximum number of recent outcomes to retain in the rolling window
+DEFAULT_ROLLING_WINDOW = 50
+
 
 class CalibrationEngine:
     """
     Aligns predicted grades to real-world PSA outcomes.
 
-    Steps:
+    Phase 2 behaviour (original):
     1. Fit: compute bias, variance from calibration dataset.
     2. Build piecewise linear correction table.
     3. calibrate(predicted, confidence) → calibrated grade + confidence adjustment.
+
+    Phase 3 additions:
+    4. update_from_outcomes(): absorb new real outcomes, re-fit automatically.
+    5. Rolling history: keep the N most recent outcomes for rolling stats.
+    6. Calibration history log: every re-fit is recorded with timestamp + stats.
+    7. save_state() / load_state(): persist and restore calibration state to JSON.
     """
 
-    def __init__(self, calibration_data: Optional[List[Dict]] = None) -> None:
-        self._data: List[Dict] = calibration_data or DEFAULT_CALIBRATION_DATA
+    def __init__(
+        self,
+        calibration_data:   Optional[List[Dict]] = None,
+        rolling_window:     int = DEFAULT_ROLLING_WINDOW,
+    ) -> None:
+        # Core data: base calibration points (from config or defaults)
+        self._base_data: List[Dict] = list(calibration_data or DEFAULT_CALIBRATION_DATA)
+
+        # Rolling outcomes: real-world records added via update_from_outcomes()
+        # Format: [{"predicted_grade": float, "actual_grade": float}, ...]
+        self._rolling_outcomes: List[Dict] = []
+        self._rolling_window: int = rolling_window
+
+        # Calibration history: log of every re-fit event
+        self._calibration_history: List[Dict] = []
+
+        # Internal state
         self._bias: float = 0.0
         self._variance: float = 0.0
         self._correction_table: List[Tuple[float, float]] = []
+
         self._fit()
 
     # ── Fitting ────────────────────────────────────────────────────────────────
 
     def _fit(self) -> None:
-        """Compute bias, variance and build correction table."""
-        if not self._data:
+        """
+        Re-fit bias, variance and correction table from merged data.
+
+        Merges base calibration data with recent rolling outcomes.
+        Rolling outcomes take precedence (they are more recent and real).
+        """
+        merged = list(self._base_data) + list(self._rolling_outcomes)
+        if not merged:
             return
 
-        errors = [d["predicted_grade"] - d["actual_grade"] for d in self._data]
+        errors = [d["predicted_grade"] - d["actual_grade"] for d in merged]
         n = len(errors)
-        self._bias = sum(errors) / n
+        self._bias     = sum(errors) / n
         self._variance = sum((e - self._bias) ** 2 for e in errors) / n
 
         # Piecewise correction table: sorted by predicted_grade
-        points = sorted(self._data, key=lambda d: d["predicted_grade"])
-        self._correction_table = [
-            (d["predicted_grade"], float(d["actual_grade"])) for d in points
-        ]
+        # De-duplicate by averaging actual grades for identical predicted values
+        _table_map: Dict[float, List[float]] = {}
+        for d in merged:
+            pg = d["predicted_grade"]
+            _table_map.setdefault(pg, []).append(float(d["actual_grade"]))
+
+        self._correction_table = sorted(
+            [(pg, sum(actuals) / len(actuals)) for pg, actuals in _table_map.items()],
+            key=lambda x: x[0],
+        )
 
     # ── Interpolation ──────────────────────────────────────────────────────────
 
@@ -110,6 +158,19 @@ class CalibrationEngine:
         """Standard deviation of prediction errors."""
         return round(math.sqrt(self._variance), 4)
 
+    @property
+    def rolling_window(self) -> int:
+        return self._rolling_window
+
+    @property
+    def n_rolling_outcomes(self) -> int:
+        return len(self._rolling_outcomes)
+
+    @property
+    def calibration_history(self) -> List[Dict]:
+        """Read-only copy of the calibration update log."""
+        return list(self._calibration_history)
+
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def calibrate(self, predicted_grade: float, confidence: float) -> Dict[str, Any]:
@@ -136,7 +197,7 @@ class CalibrationEngine:
         # Confidence adjustment: penalise by calibration variance
         # High variance = less reliable calibration = lower confidence
         variance_penalty = min(0.15, self._variance * 0.08)
-        calibrated_conf = round(max(0.40, confidence - variance_penalty), 2)
+        calibrated_conf  = round(max(0.40, confidence - variance_penalty), 2)
 
         return {
             "calibrated_grade":       calibrated,
@@ -148,16 +209,161 @@ class CalibrationEngine:
             "std_dev":                self.std_dev,
         }
 
+    # ── Phase 3: Feedback loop ─────────────────────────────────────────────────
+
+    def update_from_outcomes(
+        self,
+        outcomes: List[Dict],
+        record_history: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Absorb real-world grading outcomes and re-fit the calibration model.
+
+        Each outcome must have:
+            predicted_grade: float  — what the AI predicted
+            actual_grade:    float  — what PSA returned
+
+        Optional:
+            card_id, timestamp, notes
+
+        Rolling window behaviour:
+            - New outcomes are appended to the rolling buffer.
+            - If the buffer exceeds rolling_window, oldest outcomes are dropped.
+            - Base calibration data is always retained as the prior.
+
+        Returns:
+            A summary of the re-fit: old bias, new bias, delta, n_outcomes.
+        """
+        if not outcomes:
+            return {"updated": False, "reason": "No outcomes provided."}
+
+        # Validate and normalise
+        new_points: List[Dict] = []
+        for o in outcomes:
+            if "predicted_grade" not in o or "actual_grade" not in o:
+                continue
+            new_points.append({
+                "predicted_grade": float(o["predicted_grade"]),
+                "actual_grade":    float(o["actual_grade"]),
+            })
+
+        if not new_points:
+            return {"updated": False, "reason": "No valid outcome records."}
+
+        old_bias     = self.bias
+        old_variance = self.variance
+        old_n        = self.n_rolling_outcomes
+
+        # Append to rolling buffer
+        self._rolling_outcomes.extend(new_points)
+
+        # Trim to rolling window (keep most recent)
+        if len(self._rolling_outcomes) > self._rolling_window:
+            self._rolling_outcomes = self._rolling_outcomes[-self._rolling_window:]
+
+        # Re-fit
+        self._fit()
+
+        new_bias     = self.bias
+        new_variance = self.variance
+        bias_delta   = round(new_bias - old_bias, 4)
+
+        result = {
+            "updated":        True,
+            "n_new_outcomes": len(new_points),
+            "n_rolling_total": self.n_rolling_outcomes,
+            "old_bias":       old_bias,
+            "new_bias":       new_bias,
+            "bias_delta":     bias_delta,
+            "old_variance":   old_variance,
+            "new_variance":   new_variance,
+            "timestamp":      datetime.utcnow().isoformat() + "Z",
+        }
+
+        if record_history:
+            self._calibration_history.append(result)
+
+        return result
+
+    def rolling_performance(self) -> Dict[str, Any]:
+        """
+        Compute rolling accuracy stats from the most-recent outcomes buffer.
+
+        Returns per-outcome error stats for the rolling window only,
+        useful for detecting recent drift vs baseline calibration.
+        """
+        if not self._rolling_outcomes:
+            return {"n": 0, "note": "No rolling outcomes recorded yet."}
+
+        errors     = [d["predicted_grade"] - d["actual_grade"] for d in self._rolling_outcomes]
+        abs_errors = [abs(e) for e in errors]
+        n          = len(errors)
+
+        return {
+            "n":          n,
+            "bias":       round(sum(errors) / n, 4),
+            "mae":        round(sum(abs_errors) / n, 4),
+            "variance":   round(sum((e - sum(errors) / n) ** 2 for e in errors) / n, 4),
+            "max_error":  round(max(abs_errors), 2),
+            "min_error":  round(min(abs_errors), 2),
+            "within_0.5_pct": round(sum(1 for e in abs_errors if e <= 0.5) / n * 100, 1),
+        }
+
+    # ── Persistence ────────────────────────────────────────────────────────────
+
+    def save_state(self, path: str) -> None:
+        """
+        Persist calibration engine state to a JSON file.
+
+        Saves: rolling_outcomes, calibration_history, rolling_window.
+        Base calibration data is NOT saved (it is loaded from config at startup).
+        """
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        state = {
+            "rolling_window":       self._rolling_window,
+            "rolling_outcomes":     self._rolling_outcomes,
+            "calibration_history":  self._calibration_history,
+            "saved_at":             datetime.utcnow().isoformat() + "Z",
+        }
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=2)
+
+    def load_state(self, path: str) -> bool:
+        """
+        Load calibration state from a previously saved JSON file.
+
+        Returns True on success, False if file not found.
+        Re-fits the model after loading.
+        """
+        if not os.path.exists(path):
+            return False
+
+        with open(path, "r", encoding="utf-8") as fh:
+            state = json.load(fh)
+
+        self._rolling_window        = state.get("rolling_window", self._rolling_window)
+        self._rolling_outcomes      = state.get("rolling_outcomes", [])
+        self._calibration_history   = state.get("calibration_history", [])
+
+        self._fit()
+        return True
+
+    # ── Diagnostics ────────────────────────────────────────────────────────────
+
     def summary(self) -> Dict[str, Any]:
         """Return calibration model diagnostics."""
         return {
-            "n_samples":         len(self._data),
-            "bias":              self.bias,
-            "variance":          self.variance,
-            "std_dev":           self.std_dev,
-            "correction_points": len(self._correction_table),
-            "grade_range":       (
-                self._correction_table[0][0] if self._correction_table else None,
+            "n_samples":          len(self._base_data) + len(self._rolling_outcomes),
+            "n_base_samples":     len(self._base_data),
+            "n_rolling_outcomes": self.n_rolling_outcomes,
+            "rolling_window":     self._rolling_window,
+            "bias":               self.bias,
+            "variance":           self.variance,
+            "std_dev":            self.std_dev,
+            "correction_points":  len(self._correction_table),
+            "n_history_entries":  len(self._calibration_history),
+            "grade_range": (
+                self._correction_table[0][0]  if self._correction_table else None,
                 self._correction_table[-1][0] if self._correction_table else None,
             ),
         }
@@ -170,8 +376,8 @@ _default_engine = CalibrationEngine()
 
 def calibrate_grade(
     predicted_grade: float,
-    confidence: float,
-    custom_data: Optional[List[Dict]] = None,
+    confidence:      float,
+    custom_data:     Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
     """
     Convenience function.

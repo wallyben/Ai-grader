@@ -1,8 +1,9 @@
 """
-AI Card Grader — Core Package  v2 (Phase 2)
+AI Card Grader — Core Package  v3 (Phase 3)
 Full production pipeline with quality gate, card profiles, defect evidence,
 grade trace, front+back combined scoring, artifact export,
-calibration engine, ROI analysis, and PDF report generation.
+calibration engine, ROI analysis, PDF report generation,
+and calibration/evaluation framework.
 """
 
 import numpy as np
@@ -37,6 +38,11 @@ from .calibration import calibrate_grade, compute_calibration_stats, Calibration
 from .pricing     import build_pricing, validate_pricing, CardPricing, CardPricingBundle
 from .roi         import compute_roi, rank_batch_by_roi, batch_roi_summary
 from .report      import generate_report, generate_report_to_file
+# ── Phase 3 ───────────────────────────────────────────────────────────────────
+from .evaluation        import (EvaluationRecord, MetricsEngine,
+                                 load_evaluation_dataset, save_evaluation_dataset)
+from .decision_optimizer import DecisionOptimizer
+from .eval_dashboard    import render_dashboard, render_evaluation_report
 
 
 # ─── Full pipeline ────────────────────────────────────────────────────────────

@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Card Grader Evaluation Record",
+  "description": "Schema for real-world grading outcome records used to evaluate and calibrate the AI grading system.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["card_id", "predicted_grade", "final_grade", "roi_decision"],
+    "properties": {
+      "card_id": {
+        "type": "string",
+        "description": "Unique identifier for the card (e.g. 'charizard_base_1')"
+      },
+      "card_name": {
+        "type": "string",
+        "description": "Human-readable card name (e.g. 'Charizard Base Set Holo')"
+      },
+      "predicted_grade": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 10,
+        "description": "Grade predicted by the AI system before PSA submission"
+      },
+      "final_grade": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 10,
+        "description": "Actual PSA/BGS grade received after professional grading"
+      },
+      "roi_decision": {
+        "type": "string",
+        "enum": ["STRONG GRADE", "GRADE", "CONDITIONAL", "HOLD RAW", "DO NOT GRADE"],
+        "description": "AI system ROI decision recommendation"
+      },
+      "actual_outcome_profit": {
+        "type": ["number", "null"],
+        "description": "Actual profit/loss realised (slab sale price minus raw cost and grading fee)"
+      },
+      "predicted_profit": {
+        "type": ["number", "null"],
+        "description": "Expected profit predicted by the AI ROI engine at time of decision"
+      },
+      "profile": {
+        "type": ["string", "null"],
+        "description": "Card profile used for grading (e.g. 'tcg_generic', 'pokemon_vintage')"
+      },
+      "timestamp": {
+        "type": ["string", "null"],
+        "description": "ISO 8601 datetime when the record was created"
+      },
+      "notes": {
+        "type": ["string", "null"],
+        "description": "Optional free-text notes (e.g. 'corner wear misidentified as severe')"
+      }
+    }
+  }
+}
